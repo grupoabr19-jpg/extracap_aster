@@ -1,0 +1,10 @@
+.git
+.env
+.venv
+venv
+__pycache__
+*.pyc
+logs
+output
+playwright-report
+.pytest_cache

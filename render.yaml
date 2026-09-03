@@ -1,0 +1,93 @@
+services:
+  - type: web
+    name: grupoabr-aster-varejo
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: TRIGGER_TOKEN
+        generateValue: true
+      - key: BUSINESS_TIMEZONE
+        value: America/Sao_Paulo
+      - key: REFERENCE_DATE_MODE
+        value: previous_business_day
+      - key: NON_WORKING_DATES
+        value: ""
+      - key: DAILY_COMPARISON_ENABLED
+        value: "true"
+      - key: EMAIL_ENABLED
+        value: "false"
+      - key: SHEETS_OUTPUT_TAB
+        value: 1_Lançamentos Diários
+      - key: ASTER_HEADLESS
+        value: "true"
+      - key: ASTER_POST_LOGIN_WAIT_MS
+        value: "1000"
+      - key: ASTER_NAVIGATION_TIMEOUT_MS
+        value: "60000"
+      - key: OUTPUT_DIR
+        value: output
+      - key: LOG_DIR
+        value: logs
+      - key: ASTER_SALES_VENDOR_COLUMN
+        value: Vendedor
+      - key: ASTER_SALES_QUANTITY_COLUMN
+        value: Quantidade
+      - key: ASTER_SALES_DATE_COLUMN
+        value: Data
+      - key: ASTER_SALES_ACCUMULATED_COLUMN
+        value: ""
+      - key: ASTER_URL
+        sync: false
+      - key: ASTER_USERNAME
+        sync: false
+      - key: ASTER_PASSWORD
+        sync: false
+      - key: ASTER_USERNAME_SELECTOR
+        sync: false
+      - key: ASTER_PASSWORD_SELECTOR
+        sync: false
+      - key: ASTER_LOGIN_BUTTON_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_URL
+        sync: false
+      - key: ASTER_REPORT_READY_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_TABLE_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_DOWNLOAD_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_CARD_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_START_DATE_SELECTOR
+        sync: false
+      - key: ASTER_REPORT_END_DATE_SELECTOR
+        sync: false
+      - key: SHEETS_API_URL
+        sync: false
+      - key: SHEETS_API_TOKEN
+        sync: false
+
+  - type: cron
+    name: grupoabr-aster-varejo-diario
+    runtime: python
+    plan: free
+    region: virginia
+    schedule: "0 8 * * 1-5"
+    buildCommand: echo "Agendador pronto"
+    startCommand: python cron_trigger.py
+    autoDeployTrigger: commit
+    envVars:
+      - key: AUTOMATION_URL
+        value: https://grupoabr-aster-varejo.onrender.com
+      - key: TRIGGER_TOKEN
+        fromService:
+          type: web
+          name: grupoabr-aster-varejo
+          envVarKey: TRIGGER_TOKEN
+      - key: AUTOMATION_TIMEOUT_SECONDS
+        value: "1200"
