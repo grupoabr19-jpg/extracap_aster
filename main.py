@@ -1,6 +1,7 @@
 """Extrai vendas do Aster, publica lancamentos e envia o relatorio."""
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
 import csv
@@ -102,24 +103,38 @@ def login_and_extract(page: Page, settings: Settings, logger):
     page.set_default_timeout(settings.navigation_timeout_ms)
     page.set_default_navigation_timeout(settings.navigation_timeout_ms)
     logger.info("Abrindo tela de login")
-    page.goto(settings.aster_url, wait_until="commit", timeout=settings.navigation_timeout_ms)
-    logger.info("Tela de login carregada: %s", page.url)
+    logger.info("Iniciando navegacao para o Aster")
+    try:
+        page.goto(settings.aster_url, wait_until="commit", timeout=settings.navigation_timeout_ms)
+    except PlaywrightTimeoutError:
+        settings.output_dir.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(settings.output_dir / "aster_navigation_timeout.png"), full_page=True)
+        (settings.output_dir / "aster_navigation_timeout.html").write_text(page.content(), encoding="utf-8")
+        raise ValueError("Timeout ao abrir a tela de login do Aster; diagnostico salvo em output/aster_navigation_timeout.*")
+    logger.info("Tela de login carregada: url=%s title=%s", page.url, page.title())
     logger.info("Preenchendo usuario")
     username = page.locator(settings.username_selector)
+    logger.info("Seletor de usuario encontrado: %s", username.count())
     username.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
     username.fill(settings.username)
     logger.info("Preenchendo senha")
     password = page.locator(settings.password_selector)
+    logger.info("Seletor de senha encontrado: %s", password.count())
     password.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
     password.fill(settings.password)
     logger.info("Enviando login")
     login_button = page.locator(settings.login_button_selector)
+    logger.info("Seletor do botao de login encontrado: %s", login_button.count())
     login_button.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
     login_button.click()
     try: page.wait_for_url(lambda url: "/login" not in url.casefold(), timeout=settings.navigation_timeout_ms)
     except PlaywrightTimeoutError: page.wait_for_timeout(settings.post_login_wait_ms)
-    logger.info("Login processado: %s", page.url)
-    if "/login" in page.url.casefold(): raise ValueError("Login nao concluido no Aster")
+    logger.info("Login processado: url=%s title=%s", page.url, page.title())
+    if "/login" in page.url.casefold():
+        settings.output_dir.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(settings.output_dir / "aster_login_failed.png"), full_page=True)
+        (settings.output_dir / "aster_login_failed.html").write_text(page.content(), encoding="utf-8")
+        raise ValueError("Login nao concluido no Aster; diagnostico salvo em output/aster_login_failed.*")
     logger.info("Abrindo relatorio configurado")
     page.goto(settings.report_url, wait_until="domcontentloaded")
     page.locator(settings.report_ready_selector).wait_for(state="visible")
@@ -185,7 +200,7 @@ def run(reference_date=None):
             if settings.daily_comparison_enabled:
                 if not attachment: raise ValueError("A carga exige dados do relatorio")
                 records = read_sales_records(attachment, reference_date, settings.sales_vendor_column, settings.sales_quantity_column, settings.sales_date_column)
-                headers = ["Data", "Vendedor", "Peso do dia (kg)", "Observacao"]
+                headers = ["Data", "Vendedor", "Peso do dia (kg)", "Observação"]
                 if settings.report_data_mode == "cumulative_by_seller":
                     totals = {}
                     for _, vendor, amount in records: totals[vendor] = totals.get(vendor, Decimal("0")) + amount

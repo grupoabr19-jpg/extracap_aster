@@ -58,7 +58,17 @@ def trigger():
         from datetime import date
         try: reference_date = date.fromisoformat(raw_date)
         except ValueError: return jsonify(error="reference_date invalida"), 400
-    Thread(target=worker, args=(reference_date or previous_calendar_day(),), daemon=True).start()
+    selected_date = reference_date or previous_calendar_day()
+    with state_lock:
+        if state["state"] == "running": return jsonify(error="already_running"), 409
+        state.update(
+            state="running",
+            message="Atualizacao em andamento.",
+            reference_date=selected_date.isoformat(),
+            started_at=datetime.utcnow().isoformat() + "Z",
+            finished_at=None,
+        )
+    Thread(target=worker, args=(selected_date,), daemon=True).start()
     return jsonify(state="running", message="Atualizacao iniciada."), 202
 
 if __name__ == "__main__":
