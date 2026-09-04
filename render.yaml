@@ -71,23 +71,3 @@ services:
         sync: false
       - key: SHEETS_API_TOKEN
         sync: false
-
-  - type: cron
-    name: grupoabr-aster-varejo-diario
-    runtime: python
-    plan: free
-    region: virginia
-    schedule: "0 8 * * *"
-    buildCommand: echo "Agendador pronto"
-    startCommand: python cron_trigger.py
-    autoDeployTrigger: commit
-    envVars:
-      - key: AUTOMATION_URL
-        value: https://grupoabr-aster-varejo.onrender.com
-      - key: TRIGGER_TOKEN
-        fromService:
-          type: web
-          name: grupoabr-aster-varejo
-          envVarKey: TRIGGER_TOKEN
-      - key: AUTOMATION_TIMEOUT_SECONDS
-        value: "1200"

@@ -2,12 +2,11 @@
 
 Projeto Python para autenticar no Aster ERP com Playwright, extrair uma tabela ou baixar um arquivo e enviar o resultado por SMTP.
 
-O projeto tambem pode operar no Render com duas entradas para a mesma rotina:
+O projeto pode operar no Render por acionamento protegido por token, inclusive
+a partir do Google Sheets. O agendamento automatico sera configurado
+separadamente e nao faz parte deste Blueprint.
 
-- cron todos os dias, as 08:00 UTC (05:00 em Brasilia);
-- acionamento manual protegido por token a partir do Google Sheets.
-
-Em ambos os casos, a data processada e o dia anterior, inclusive quando for
+Quando acionado sem uma data explicita, a data processada e o dia anterior, inclusive quando for
 sabado, domingo ou feriado. Uma nova
 execucao para a mesma data substitui somente aquele dia e preserva o historico.
 
@@ -18,7 +17,6 @@ extracao_aster/
 |-- main.py
 |-- business_calendar.py  # ultimo dia util e feriados
 |-- web_app.py            # endpoint do botao manual
-|-- cron_trigger.py       # acompanha a execucao agendada
 |-- sheets_client.py
 |-- sync_sheet.py          # diagnostico antigo de leitura
 |-- sheets_writer.py       # publica resultados via POST
@@ -62,12 +60,9 @@ Edite `.env` com usuario, senha, SMTP, destinatarios e seletores reais. O valor 
 
 ## Deploy no Render
 
-O `render.yaml` cria:
-
-1. `grupoabr-aster-varejo`: servico web que executa o Playwright e recebe o
-   acionamento manual;
-2. `grupoabr-aster-varejo-diario`: cron que chama o servico as 08:00 UTC,
-   todos os dias e acompanha o status ate sucesso ou erro.
+O `render.yaml` cria somente o servico web `grupoabr-aster-varejo`, que
+executa o Playwright e recebe acionamentos protegidos por token. Nenhum cron e
+criado pelo Blueprint.
 
 As variaveis marcadas como `sync: false` devem ser preenchidas no primeiro
 deploy. Senhas e tokens nunca devem ser gravados no GitHub.
@@ -104,7 +99,7 @@ Na primeira utilizacao, o Google pedira autorizacao para a chamada externa.
 python main.py
 ```
 
-O processo roda headless por padrao, aguarda seletores visiveis, gera CSV quando extrai HTML e registra auditoria em `logs/execucao.log`. Para investigar seletores, use temporariamente `ASTER_HEADLESS=false`; a execucao agendada deve permanecer `true`.
+O processo roda headless por padrao, aguarda seletores visiveis, gera CSV quando extrai HTML e registra auditoria em `logs/execucao.log`. Para investigar seletores, use temporariamente `ASTER_HEADLESS=false`; no Render, mantenha `true`.
 
 ## Conexao com a planilha por Apps Script
 
@@ -194,31 +189,9 @@ XPath tambem funciona, por exemplo `xpath=//input[@name='usuario']`, embora CSS 
 
 ## Agendamento
 
-### Windows Task Scheduler
-
-Crie uma tarefa diaria com **Create Basic Task**, escolha `05:00`, selecione **Start a program** e informe:
-
-- Program/script: `C:\caminho\extracao_aster\.venv\Scripts\python.exe`
-- Add arguments: `C:\caminho\extracao_aster\main.py`
-- Start in: `C:\caminho\extracao_aster`
-
-Marque **Run whether user is logged on or not** e confirme que a conta tem acesso a rede, ao `.env` e ao SMTP.
-
-Alternativa via PowerShell (ajuste caminhos e horario):
-
-```powershell
-$action = New-ScheduledTaskAction -Execute 'C:\caminho\extracao_aster\.venv\Scripts\python.exe' -Argument 'C:\caminho\extracao_aster\main.py' -WorkingDirectory 'C:\caminho\extracao_aster'
-$trigger = New-ScheduledTaskTrigger -Daily -At 05:00
-Register-ScheduledTask -TaskName 'Extracao Aster ERP' -Action $action -Trigger $trigger -User 'DOMINIO\usuario'
-```
-
-### Linux Cron
-
-Edite o crontab com `crontab -e` e agende diariamente as 06:00:
-
-```cron
-0 5 * * * cd /caminho/extracao_aster && /caminho/extracao_aster/.venv/bin/python main.py >> logs/cron.log 2>&1
-```
+O agendamento automatico sera criado fora deste projeto. A ferramenta escolhida
+devera fazer um `POST` autenticado para `/run`; o endpoint `/status` permite
+acompanhar o resultado.
 
 ## Operacao e seguranca
 
