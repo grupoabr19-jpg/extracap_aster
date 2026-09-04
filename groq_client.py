@@ -8,6 +8,9 @@ from enum import Enum
 from typing import Any, Optional
 import requests
 
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEPRECATED_GROQ_MODELS = {"mixtral-8x7b-32768"}
+
 
 class StatePage(str, Enum):
     """Estados da página durante navegação."""
@@ -157,9 +160,9 @@ class GroqClient:
     MAX_ROUNDS = 3
     CONFIDENCE_THRESHOLD = 0.85
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "mixtral-8x7b-32768", timeout: int = 30, logger: Optional[logging.Logger] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = DEFAULT_GROQ_MODEL, timeout: int = 30, logger: Optional[logging.Logger] = None):
         self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
-        self.model = model
+        self.model = DEFAULT_GROQ_MODEL if model in DEPRECATED_GROQ_MODELS else model
         self.timeout = timeout
         self.logger = logger or logging.getLogger("groq")
         self.enabled = bool(self.api_key)

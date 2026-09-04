@@ -20,6 +20,7 @@ from sheets_writer import publish_from_env
 from groq_client import GroqClient, sanitize_page_diagnostic
 
 ROOT = Path(__file__).resolve().parent
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 @dataclass(frozen=True)
 class Settings:
@@ -73,6 +74,9 @@ class Settings:
         def items(name):
             return [x.strip() for x in os.getenv(name, "").replace(";", ",").split(",") if x.strip()]
         today = reference_date or datetime.now().date()
+        groq_model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip()
+        if groq_model == "mixtral-8x7b-32768":
+            groq_model = DEFAULT_GROQ_MODEL
         return cls(
             os.getenv("ASTER_URL", "https://aster.gruposps.com.br/Login").strip(), required("ASTER_USERNAME"), required("ASTER_PASSWORD"),
             os.getenv("ASTER_USERNAME_SELECTOR", "input#email||input[type=\"email\"]").strip(),
@@ -97,7 +101,7 @@ class Settings:
             os.getenv("ASTER_SALES_QUANTITY_COLUMN", ""), os.getenv("ASTER_SALES_DATE_COLUMN", ""),
             os.getenv("GROQ_ENABLED", "true").lower() in {"1", "true", "yes"},
             os.getenv("GROQ_API_KEY", "").strip(),
-            os.getenv("GROQ_MODEL", "mixtral-8x7b-32768").strip(),
+            groq_model,
             int(os.getenv("GROQ_TIMEOUT_SECONDS", "30")),
             float(os.getenv("GROQ_CONFIDENCE_THRESHOLD", "0.85")),
         )
@@ -165,6 +169,59 @@ def _find_visible_element(page: Page, selector: str, timeout: int):
             raise TimeoutError(f"Nenhum elemento visível encontrado com seletor '{selector}' em {timeout}ms")
         
         page.wait_for_timeout(100)
+
+
+def _find_report_date_field(page: Page, configured_selector: str, field: str, timeout: int, logger):
+    """Resolve um filtro de data sem depender da ordem dos inputs da SPA."""
+    legacy_selector = 'input[autocomplete="off"]'
+    if configured_selector and not configured_selector.startswith(legacy_selector):
+        return _find_visible_element(page, configured_selector, timeout)
+
+    candidates = page.locator("input:not([type='hidden']), textarea")
+    deadline_ms = page.locator("body").evaluate("() => Date.now()") + timeout
+    wanted = "inicio inicial start" if field == "start_date" else "fim final end"
+    while True:
+        count = candidates.count()
+        scored = []
+        for index in range(count):
+            candidate = candidates.nth(index)
+            try:
+                if not candidate.is_visible():
+                    continue
+                metadata = candidate.evaluate("""el => {
+                    const label = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
+                    const parent = el.closest('div,td,fieldset') || el.parentElement;
+                    return {
+                        type: (el.type || '').toLowerCase(),
+                        name: el.name || '', id: el.id || '',
+                        placeholder: el.placeholder || '',
+                        aria: el.getAttribute('aria-label') || '',
+                        title: el.title || '',
+                        label: label ? label.innerText : '',
+                        context: parent ? parent.innerText.slice(0, 160) : ''
+                    };
+                }""")
+                text = " ".join(str(value).lower() for value in metadata.values())
+                score = 100 if metadata["type"] == "date" else 0
+                if any(token in text for token in ("data", "date")):
+                    score += 60
+                if any(token in text for token in wanted.split()):
+                    score += 50
+                if "pesquisar" in text or "search" in text:
+                    score -= 80
+                if score:
+                    scored.append((score, index, metadata))
+            except Exception:
+                continue
+        if scored:
+            best_score = max(item[0] for item in scored)
+            best = [item for item in scored if item[0] == best_score]
+            score, index, metadata = (min if field == "start_date" else max)(best, key=lambda item: item[1])
+            logger.info("Campo %s resolvido por DOM: input[%d] score=%d type=%s name=%s placeholder=%s", field, index, score, metadata["type"], metadata["name"], metadata["placeholder"])
+            return candidates.nth(index)
+        if page.locator("body").evaluate("() => Date.now()") >= deadline_ms:
+            raise ValueError(f"Nenhum filtro de data visivel encontrado para {field}")
+        page.wait_for_timeout(250)
 
 
 def _capture_page_diagnostic(page: Page, field: str, error: str) -> dict:
@@ -483,11 +540,12 @@ def login_and_extract(page: Page, settings: Settings, logger):
     except Exception as diag_error:
         logger.warning("Erro ao capturar diagnóstico pós-clique: %s", diag_error)
     
-    if settings.report_start_date_selector:
+    if settings.report_start_date_selector is not None:
         try:
-            field = _find_with_groq_fallback(
-                page, settings, settings.report_start_date_selector, "start_date", 15000, logger, groq_client
-            )
+            try:
+                field = _find_report_date_field(page, settings.report_start_date_selector, "start_date", 15000, logger)
+            except (TimeoutError, ValueError):
+                field = _find_with_groq_fallback(page, settings, settings.report_start_date_selector or 'input[type="date"]', "start_date", 15000, logger, groq_client)
             logger.info("Campo de data inicial encontrado e visivel")
             field.fill(settings.report_start_date)
             field.press("Tab")
@@ -496,11 +554,12 @@ def login_and_extract(page: Page, settings: Settings, logger):
             _save_diagnostic(page, settings, "aster_report_start_date_timeout", logger)
             raise ValueError("Campo de data inicial nao encontrado ou invisivel") from error
     
-    if settings.report_end_date_selector:
+    if settings.report_end_date_selector is not None:
         try:
-            field = _find_with_groq_fallback(
-                page, settings, settings.report_end_date_selector, "end_date", 15000, logger, groq_client
-            )
+            try:
+                field = _find_report_date_field(page, settings.report_end_date_selector, "end_date", 15000, logger)
+            except (TimeoutError, ValueError):
+                field = _find_with_groq_fallback(page, settings, settings.report_end_date_selector or 'input[type="date"]', "end_date", 15000, logger, groq_client)
             logger.info("Campo de data final encontrado e visivel")
             field.fill(settings.report_end_date)
             field.press("Tab")
