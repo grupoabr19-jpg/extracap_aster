@@ -1,5 +1,6 @@
 """API HTTP para acionamento da automacao no Render."""
 from datetime import datetime
+import logging
 import os
 from threading import Lock, Thread
 from flask import Flask, jsonify, request
@@ -23,6 +24,7 @@ def worker(reference_date):
         run(reference_date)
         with state_lock: state.update(state="success", message="Atualizacao concluida.")
     except Exception as error:
+        logging.getLogger("aster").exception("Falha na execucao para %s", reference_date.isoformat())
         with state_lock: state.update(state="error", message=str(error))
     finally:
         with state_lock: state["finished_at"] = datetime.utcnow().isoformat() + "Z"
