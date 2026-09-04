@@ -305,6 +305,63 @@ def login_and_extract(page: Page, settings: Settings, logger):
             _save_diagnostic(page, settings, "aster_report_card_timeout", logger)
             raise ValueError("O texto do cartao existe, mas nenhum container clicavel ficou visivel")
     
+    # Capturar diagnóstico imediatamente após clique no cartão
+    try:
+        _save_diagnostic(page, settings, "aster_after_card_click", logger)
+        logger.info("URL após clique: %s", page.url)
+        logger.info("Título após clique: %s", page.title())
+        
+        # Listar todos os inputs e seus atributos
+        inputs_info = page.evaluate("""() => {
+            const inputs = document.querySelectorAll('input');
+            return Array.from(inputs).map(el => ({
+                type: el.type,
+                name: el.name,
+                id: el.id,
+                placeholder: el.placeholder,
+                autocomplete: el.autocomplete,
+                value: el.value,
+                visible: el.offsetParent !== null,
+                className: el.className,
+                ariaLabel: el.getAttribute('aria-label'),
+                dataTestid: el.getAttribute('data-testid'),
+            }));
+        }""")
+        logger.info("Inputs encontrados: %d", len(inputs_info))
+        for idx, inp in enumerate(inputs_info):
+            logger.info("Input[%d]: type=%s name=%s placeholder=%s autocomplete=%s visible=%s", 
+                       idx, inp['type'], inp['name'], inp['placeholder'], inp['autocomplete'], inp['visible'])
+        
+        # Procurar elementos com texto contendo "Data"
+        data_elements = page.evaluate("""() => {
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            const results = [];
+            let node;
+            while (node = walker.nextNode()) {
+                if (node.textContent.toLowerCase().includes('data') && node.textContent.trim().length < 50) {
+                    const el = node.parentElement;
+                    results.push({
+                        text: node.textContent.trim(),
+                        tag: el.tagName,
+                        id: el.id,
+                        className: el.className,
+                        visible: el.offsetParent !== null,
+                    });
+                }
+            }
+            return results;
+        }""")
+        logger.info("Elementos com texto 'Data': %d", len(data_elements))
+        for elem in data_elements[:10]:  # Limitar a 10 primeiros
+            logger.info("  Elemento: text='%s' tag=%s visible=%s", elem['text'], elem['tag'], elem['visible'])
+    except Exception as diag_error:
+        logger.warning("Erro ao capturar diagnóstico pós-clique: %s", diag_error)
+    
     if settings.report_start_date_selector:
         try:
             field = _find_visible_element(page, settings.report_start_date_selector, 15000)
