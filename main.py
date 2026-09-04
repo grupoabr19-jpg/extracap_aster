@@ -71,7 +71,7 @@ class Settings:
             required("ASTER_USERNAME_SELECTOR"), required("ASTER_PASSWORD_SELECTOR"),
             required("ASTER_LOGIN_BUTTON_SELECTOR"), required("ASTER_REPORT_URL"),
             os.getenv("ASTER_REPORT_READY_SELECTOR", "body"), required("ASTER_REPORT_TABLE_SELECTOR"),
-            os.getenv("ASTER_REPORT_DOWNLOAD_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
+            os.getenv("ASTER_REPORT_DOWNLOAD_SELECTOR", 'button[data-tip="Baixar XLSX"]').strip(), os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_START_DATE_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_END_DATE_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_CONFIRM_SELECTOR", 'button:has-text("Confirmar")').strip(),
             os.getenv("ASTER_REPORT_START_DATE", "").strip() or today.replace(day=1).strftime("%d/%m/%Y"),
