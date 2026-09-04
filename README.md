@@ -87,6 +87,8 @@ impedem a captura diaria.
 3. Acesse **Automação de vendas > Configurar integração** e cole o mesmo valor
    de `TRIGGER_TOKEN` configurado no Render.
 4. Use **Atualizar agora** para iniciar e **Consultar status** para acompanhar.
+5. Para a rotina automatica fora do Render, escolha **Ativar atualização
+   diária (05h)**. O Apps Script criara um gatilho diario no fuso de Sao Paulo.
 
 Opcionalmente, um desenho com o texto **Atualizar agora** pode ser vinculado a
 funcao `atualizarVendasAgora`.

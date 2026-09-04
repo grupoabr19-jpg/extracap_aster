@@ -12,6 +12,9 @@ function onOpen() {
     .addItem('Atualizar agora', 'atualizarVendasAgora')
     .addItem('Consultar status', 'consultarStatusAutomacao')
     .addSeparator()
+    .addItem('Ativar atualização diária (05h)', 'ativarAtualizacaoDiaria')
+    .addItem('Desativar atualização diária', 'desativarAtualizacaoDiaria')
+    .addSeparator()
     .addItem('Configurar integração', 'configurarAutomacao')
     .addToUi();
 }
@@ -40,15 +43,28 @@ function configurarAutomacao() {
 }
 
 function atualizarVendasAgora() {
+  const resultado = acionarAtualizacao_();
+  SpreadsheetApp.getActive().toast(
+    resultado.mensagem,
+    'Automação de vendas',
+    8
+  );
+}
+
+function executarAtualizacaoAgendada() {
+  acionarAtualizacao_();
+}
+
+function acionarAtualizacao_() {
   const properties = PropertiesService.getScriptProperties();
   const baseUrl = properties.getProperty('ASTER_RENDER_URL');
   const token = properties.getProperty('ASTER_RENDER_TOKEN');
 
   if (!baseUrl || !token) {
-    SpreadsheetApp.getUi().alert(
-      'Configure ASTER_RENDER_URL e ASTER_RENDER_TOKEN nas propriedades do Apps Script.'
-    );
-    return;
+    return {
+      sucesso: false,
+      mensagem: 'Configure a integração antes de executar.'
+    };
   }
 
   const response = UrlFetchApp.fetch(baseUrl.replace(/\/$/, '') + '/run', {
@@ -64,7 +80,48 @@ function atualizarVendasAgora() {
     ? 'Atualização iniciada. Os rankings serão recalculados ao término.'
     : 'Não foi possível iniciar. Código HTTP: ' + status;
 
-  SpreadsheetApp.getActive().toast(message, 'Automação de vendas', 8);
+  return { sucesso: status === 202, mensagem: message };
+}
+
+function ativarAtualizacaoDiaria() {
+  const properties = PropertiesService.getScriptProperties();
+  if (!properties.getProperty('ASTER_RENDER_TOKEN')) {
+    SpreadsheetApp.getUi().alert('Configure a integração antes de ativar o agendamento.');
+    return;
+  }
+
+  removerGatilhosDiarios_();
+  ScriptApp.newTrigger('executarAtualizacaoAgendada')
+    .timeBased()
+    .atHour(5)
+    .nearMinute(0)
+    .everyDays(1)
+    .inTimezone('America/Sao_Paulo')
+    .create();
+
+  SpreadsheetApp.getUi().alert(
+    'Atualização diária ativada para aproximadamente 05:00, no horário de São Paulo.'
+  );
+}
+
+function desativarAtualizacaoDiaria() {
+  const removidos = removerGatilhosDiarios_();
+  SpreadsheetApp.getUi().alert(
+    removidos
+      ? 'Atualização diária desativada.'
+      : 'Nenhum agendamento diário estava ativo.'
+  );
+}
+
+function removerGatilhosDiarios_() {
+  let removidos = 0;
+  ScriptApp.getProjectTriggers().forEach(function(gatilho) {
+    if (gatilho.getHandlerFunction() === 'executarAtualizacaoAgendada') {
+      ScriptApp.deleteTrigger(gatilho);
+      removidos++;
+    }
+  });
+  return removidos;
 }
 
 function consultarStatusAutomacao() {
