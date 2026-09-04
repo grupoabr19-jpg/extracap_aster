@@ -83,13 +83,13 @@ impedem a captura diaria.
 
 1. No Apps Script vinculado a planilha, crie um arquivo e cole o conteudo de
    `apps_script/ManualTrigger.gs`.
-2. Nas propriedades do projeto, cadastre:
-   - `ASTER_RENDER_URL=https://grupoabr-aster-varejo.onrender.com`
-   - `ASTER_RENDER_TOKEN` com o mesmo valor de `TRIGGER_TOKEN` do Render.
-3. Na aba `5_Configurações`, insira um desenho ou imagem com o texto
-   **Atualizar agora**.
-4. No menu do desenho, escolha **Atribuir script** e informe
-   `atualizarVendasAgora`.
+2. Recarregue a planilha para abrir o menu **Automação de vendas**.
+3. Acesse **Automação de vendas > Configurar integração** e cole o mesmo valor
+   de `TRIGGER_TOKEN` configurado no Render.
+4. Use **Atualizar agora** para iniciar e **Consultar status** para acompanhar.
+
+Opcionalmente, um desenho com o texto **Atualizar agora** pode ser vinculado a
+funcao `atualizarVendasAgora`.
 
 Na primeira utilizacao, o Google pedira autorizacao para a chamada externa.
 
@@ -192,6 +192,17 @@ XPath tambem funciona, por exemplo `xpath=//input[@name='usuario']`, embora CSS 
 O agendamento automatico sera criado fora deste projeto. A ferramenta escolhida
 devera fazer um `POST` autenticado para `/run`; o endpoint `/status` permite
 acompanhar o resultado.
+
+```http
+POST https://grupoabr-aster-varejo.onrender.com/run
+Authorization: Bearer SEU_TRIGGER_TOKEN
+Content-Type: application/json
+
+{}
+```
+
+Para processar uma data especifica, envie
+`{"reference_date":"2026-09-03"}`. Sem data, o servico usa o dia anterior.
 
 ## Operacao e seguranca
 

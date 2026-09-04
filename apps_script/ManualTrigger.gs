@@ -1,10 +1,44 @@
 /**
  * Acionamento manual da automacao hospedada no Render.
  *
- * Propriedades obrigatorias do projeto:
- * - ASTER_RENDER_URL: https://grupoabr-aster-varejo.onrender.com
- * - ASTER_RENDER_TOKEN: mesmo valor de TRIGGER_TOKEN no Render
+ * A funcao configurarAutomacao solicita o token uma unica vez e o armazena
+ * nas propriedades privadas do projeto.
  */
+const ASTER_RENDER_URL_PADRAO = 'https://grupoabr-aster-varejo.onrender.com';
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Automação de vendas')
+    .addItem('Atualizar agora', 'atualizarVendasAgora')
+    .addItem('Consultar status', 'consultarStatusAutomacao')
+    .addSeparator()
+    .addItem('Configurar integração', 'configurarAutomacao')
+    .addToUi();
+}
+
+function configurarAutomacao() {
+  const ui = SpreadsheetApp.getUi();
+  const resposta = ui.prompt(
+    'Configurar automação',
+    'Cole o valor de TRIGGER_TOKEN configurado no Render:',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (resposta.getSelectedButton() !== ui.Button.OK) return;
+
+  const token = resposta.getResponseText().trim();
+  if (!token) {
+    ui.alert('O token não pode ficar vazio.');
+    return;
+  }
+
+  PropertiesService.getScriptProperties().setProperties({
+    ASTER_RENDER_URL: ASTER_RENDER_URL_PADRAO,
+    ASTER_RENDER_TOKEN: token
+  });
+  ui.alert('Integração configurada. Use o menu Automação de vendas > Atualizar agora.');
+}
+
 function atualizarVendasAgora() {
   const properties = PropertiesService.getScriptProperties();
   const baseUrl = properties.getProperty('ASTER_RENDER_URL');
@@ -37,10 +71,20 @@ function consultarStatusAutomacao() {
   const properties = PropertiesService.getScriptProperties();
   const baseUrl = properties.getProperty('ASTER_RENDER_URL');
   const token = properties.getProperty('ASTER_RENDER_TOKEN');
+  if (!baseUrl || !token) {
+    SpreadsheetApp.getUi().alert(
+      'Use Automação de vendas > Configurar integração antes de consultar.'
+    );
+    return;
+  }
   const response = UrlFetchApp.fetch(baseUrl.replace(/\/$/, '') + '/status', {
     method: 'get',
     headers: { Authorization: 'Bearer ' + token },
     muteHttpExceptions: true
   });
-  SpreadsheetApp.getUi().alert(response.getContentText());
+  SpreadsheetApp.getUi().alert(
+    'Status da automação',
+    response.getContentText(),
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
