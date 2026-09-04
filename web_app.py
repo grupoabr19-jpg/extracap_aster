@@ -37,6 +37,7 @@ def health():
         "ASTER_LOGIN_BUTTON_SELECTOR", "ASTER_REPORT_URL",
         "ASTER_REPORT_TABLE_SELECTOR", "SMTP_HOST", "SMTP_USERNAME",
         "SMTP_PASSWORD", "MAIL_FROM", "SHEETS_API_URL", "SHEETS_API_TOKEN",
+        "TRIGGER_TOKEN",
     )
     missing = [name for name in required if not os.getenv(name)]
     return jsonify(status="ok" if not missing else "degraded", missing=missing)
