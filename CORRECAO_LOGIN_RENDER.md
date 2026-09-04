@@ -24,8 +24,18 @@ gunicorn --bind 0.0.0.0:8080 --workers 1 --timeout 1800 web_app:app
 
 O `Dockerfile` usa a imagem oficial do Playwright Python, portanto não é necessário executar `playwright install` novamente dentro do container.
 
+## Integração com a planilha
+
+O objetivo operacional é `ASTER → Playwright → relatório → Apps Script → Google Sheets`. O ID da planilha usado pelo Apps Script corresponde ao documento informado e a aba de destino é `1_Lançamentos Diários`. O payload automático usa quatro colunas: `Data`, `Vendedor`, `Peso do dia (kg)` e `Observação`. A coluna `Região (automática)` observada na planilha permanece fora do payload para que a própria planilha continue calculando esse campo.
+
+O Apps Script recebido tinha `doPost()` chamando `processAutomaticPayload_()` sem que essa função existisse. Isso fazia qualquer publicação falhar mesmo quando o login e a extração fossem concluídos. O pacote agora inclui as funções de carga diária e acumulada, substituição idempotente por data, snapshots ocultos para o modo acumulado, preservação das colunas posteriores e exposição controlada das funções para os testes de contrato.
+
+A publicação passou a ser o comportamento padrão de `main.py`; ela ainda pode ser desativada explicitamente com `DAILY_COMPARISON_ENABLED=false`. O Render precisa possuir `SHEETS_API_URL`, `SHEETS_API_TOKEN` e, opcionalmente, `SHEETS_OUTPUT_TAB=1_Lançamentos Diários` configurados como variáveis de ambiente. O token não deve ser enviado no chat nem gravado no repositório.
+
 ## Validação realizada
 
-A compilação dos módulos Python e os sete testes unitários existentes passaram. O teste de contrato JavaScript do Apps Script ainda falha por uma incompatibilidade pré-existente entre o arquivo `apps_script/Code.gs` e o harness de teste: o harness espera `globalThis.__ASTER_TEST__.applyDaily`, mas essa função de teste não está exposta pelo script atual. A correção do login não altera esse contrato.
+A compilação dos módulos Python, os sete testes unitários existentes e os testes de contrato JavaScript do Apps Script passaram. Os testes confirmam o upsert diário por data, a preservação das fórmulas fora das quatro colunas automáticas e o cálculo de deltas para snapshots acumulados.
 
-O login real não foi executado nesta sessão porque não foram fornecidos valores de credenciais, e eles não devem ser enviados no chat nem incluídos no arquivo corrigido.
+O novo log confirmou que o login agora funciona: o bot encontrou e preencheu e-mail e senha, enviou o formulário e chegou a `https://aster.gruposps.com.br/Companies`. A falha restante estava no cartão: `text=Resumo Comercial` resolvia um `span` oculto, então o Playwright esperava 90 segundos por um elemento que nunca seria clicável. O código agora percorre as ocorrências, procura o ancestral interativo visível (`button`, `a`, `role=button` ou `tabindex=0`) e só depois usa o container visível como fallback. Também salva `aster_report_card_timeout.*` caso nenhum alvo fique clicável.
+
+O login e a escrita real na planilha ainda não foram executados nesta sessão porque não foram fornecidos valores de credenciais e token de produção. A validação final no Render deve acionar `/run`, consultar `/status` e verificar a nova linha na aba `1_Lançamentos Diários`.

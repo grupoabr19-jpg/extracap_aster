@@ -8,6 +8,17 @@ from urllib.error import HTTPError, URLError
 
 VALID_DATA_MODES = {"daily_rows", "cumulative_by_seller"}
 
+def _date_key(value):
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value or "").strip()
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return text
+    if len(text) == 10 and text[2] == "/" and text[5] == "/":
+        day, month, year = text.split("/")
+        return f"{year}-{month}-{day}"
+    return text
+
 def _json_value(value):
     if isinstance(value, Decimal): return float(value)
     if isinstance(value, date): return value.isoformat()
@@ -16,12 +27,13 @@ def _json_value(value):
 def validate_payload(reference_date, data_mode, headers, rows):
     if not isinstance(reference_date, date): raise ValueError("reference_date invalida")
     if data_mode not in VALID_DATA_MODES: raise ValueError("data_mode invalido")
-    if not headers or any(not isinstance(header, str) or not header for header in headers): raise ValueError("headers invalidos")
+    if len(headers) != 4 or any(not isinstance(header, str) or not header.strip() for header in headers): raise ValueError("headers invalidos")
     for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) != len(headers): raise ValueError("Todas as linhas devem ter o mesmo numero de colunas")
+        if not _date_key(row[0]): raise ValueError("Data vazia")
         if not str(row[1]).strip(): raise ValueError("Vendedor vazio")
         if not isinstance(row[2], (int, float, Decimal)) or not math.isfinite(float(row[2])): raise ValueError("Peso invalido")
-        if row[0] > reference_date.isoformat(): raise ValueError("Linha com data posterior a reference_date")
+        if _date_key(row[0]) > reference_date.isoformat(): raise ValueError("Linha com data posterior a reference_date")
 
 def publish_rows(endpoint, token, sheet_name, reference_date, data_mode, headers, rows, timeout=30):
     validate_payload(reference_date, data_mode, headers, rows)
