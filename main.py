@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any, Optional
 import csv
 import html
 import logging
@@ -16,6 +17,7 @@ from playwright.sync_api import Browser, Page, TimeoutError as PlaywrightTimeout
 from business_calendar import resolve_reference_date
 from sales_parser import read_sales_records
 from sheets_writer import publish_from_env
+from groq_client import GroqClient, sanitize_page_diagnostic
 
 ROOT = Path(__file__).resolve().parent
 
@@ -56,6 +58,11 @@ class Settings:
     sales_vendor_column: str
     sales_quantity_column: str
     sales_date_column: str
+    groq_enabled: bool
+    groq_api_key: str
+    groq_model: str
+    groq_timeout_seconds: int
+    groq_confidence_threshold: float
 
     @classmethod
     def from_env(cls, reference_date=None):
@@ -88,6 +95,11 @@ class Settings:
             os.getenv("DAILY_COMPARISON_ENABLED", "true").lower() in {"1", "true", "yes"},
             int(os.getenv("DAILY_WORKING_DAYS_REMAINING", "0")), os.getenv("ASTER_SALES_VENDOR_COLUMN", ""),
             os.getenv("ASTER_SALES_QUANTITY_COLUMN", ""), os.getenv("ASTER_SALES_DATE_COLUMN", ""),
+            os.getenv("GROQ_ENABLED", "true").lower() in {"1", "true", "yes"},
+            os.getenv("GROQ_API_KEY", "").strip(),
+            os.getenv("GROQ_MODEL", "mixtral-8x7b-32768").strip(),
+            int(os.getenv("GROQ_TIMEOUT_SECONDS", "30")),
+            float(os.getenv("GROQ_CONFIDENCE_THRESHOLD", "0.85")),
         )
 
 def configure_logging(directory):
@@ -155,12 +167,121 @@ def _find_visible_element(page: Page, selector: str, timeout: int):
         page.wait_for_timeout(100)
 
 
+def _capture_page_diagnostic(page: Page, field: str, error: str) -> dict:
+    """Captura diagnóstico sanitizado da página para enviar ao Groq."""
+    try:
+        inputs_info = page.evaluate("""() => {
+            const inputs = document.querySelectorAll('input');
+            return Array.from(inputs).map(el => ({
+                type: el.type,
+                name: el.name,
+                id: el.id,
+                placeholder: el.placeholder,
+                autocomplete: el.autocomplete,
+                visible: el.offsetParent !== null,
+                ariaLabel: el.getAttribute('aria-label'),
+                dataTestid: el.getAttribute('data-testid'),
+            }));
+        }""")
+        
+        visible_text = page.locator("body").inner_text(timeout=2000)[:1000]
+        
+        return {
+            "url": page.url,
+            "title": page.title(),
+            "field": field,
+            "error": error,
+            "inputs": inputs_info,
+            "visible_text": visible_text,
+        }
+    except Exception as e:
+        logger = logging.getLogger("aster")
+        logger.warning("Erro ao capturar diagnóstico: %s", e)
+        return {"url": page.url, "title": page.title(), "error": str(e)}
+
+
+def _find_with_groq_fallback(
+    page: Page,
+    settings: Settings,
+    selector: str,
+    field: str,
+    timeout: int,
+    logger,
+    groq_client: Optional[GroqClient] = None,
+) -> Any:
+    """Tenta encontrar elemento; se falhar, usa Groq como fallback."""
+    try:
+        return _find_visible_element(page, selector, timeout)
+    except (TimeoutError, ValueError) as e:
+        logger.warning("Seletor '%s' não encontrou elemento visível: %s", selector, e)
+        
+        if not groq_client or not groq_client.enabled:
+            raise
+        
+        # Capturar diagnóstico e consultar Groq
+        diagnostic = _capture_page_diagnostic(page, field, str(e))
+        logger.info("Consultando Groq para campo '%s'", field)
+        
+        groq_response = groq_client.ask_for_page_recovery(
+            page_state="summary_report",
+            error_message=str(e),
+            page_diagnostic=diagnostic,
+            field=field,
+        )
+        
+        if not groq_response:
+            raise ValueError(f"Campo {field} não encontrado e Groq não conseguiu ajudar")
+        
+        if groq_response.status == "blocked":
+            raise ValueError(f"Groq determinou que o campo {field} não pode ser alcançado: {groq_response.reason}")
+        
+        # Se Groq sugeriu uma ação de wait, espera
+        if groq_response.actions and groq_response.actions[0].get("type") == "wait":
+            wait_seconds = 3
+            logger.info("Groq recomendou esperar %d segundos", wait_seconds)
+            page.wait_for_timeout(wait_seconds * 1000)
+            groq_client.reset_rounds()
+            return _find_with_groq_fallback(page, settings, selector, field, timeout, logger, groq_client)
+        
+        # Se Groq sugeriu um novo seletor, tenta usar
+        new_selector = None
+        for action in groq_response.actions:
+            if action.get("type") in ["click", "fill"]:
+                new_selector = action.get("target", {}).get("selector")
+                if new_selector:
+                    break
+        
+        if new_selector and groq_response.confidence >= settings.groq_confidence_threshold:
+            logger.info("Groq sugeriu novo seletor com confidence %.2f: %s", groq_response.confidence, new_selector)
+            try:
+                return _find_visible_element(page, new_selector, timeout)
+            except (TimeoutError, ValueError) as retry_error:
+                logger.error("Novo seletor também falhou: %s", retry_error)
+                raise ValueError(f"Campo {field}: seletor original e Groq falharam") from e
+        
+        raise ValueError(f"Campo {field}: Groq não conseguiu sugerir um seletor confiável")
+
+
 def login_and_extract(page: Page, settings: Settings, logger):
     page.set_default_timeout(settings.navigation_timeout_ms)
     page.set_default_navigation_timeout(settings.navigation_timeout_ms)
     page.on("console", lambda message: logger.info("Console do Aster [%s]: %s", message.type, message.text))
     page.on("pageerror", lambda error: logger.error("Erro JavaScript do Aster: %s", error))
     page.on("requestfailed", lambda request: logger.error("Requisicao falhou: %s - %s", request.url, request.failure))
+    
+    # Inicializar cliente Groq
+    groq_client = None
+    if settings.groq_enabled and settings.groq_api_key:
+        groq_client = GroqClient(
+            api_key=settings.groq_api_key,
+            model=settings.groq_model,
+            timeout=settings.groq_timeout_seconds,
+            logger=logger,
+        )
+        logger.info("Cliente Groq inicializado")
+    else:
+        logger.info("Groq desabilitado ou não configurado")
+    
     logger.info("Abrindo tela de login")
     logger.info("Iniciando navegacao para o Aster")
     try:
@@ -364,7 +485,9 @@ def login_and_extract(page: Page, settings: Settings, logger):
     
     if settings.report_start_date_selector:
         try:
-            field = _find_visible_element(page, settings.report_start_date_selector, 15000)
+            field = _find_with_groq_fallback(
+                page, settings, settings.report_start_date_selector, "start_date", 15000, logger, groq_client
+            )
             logger.info("Campo de data inicial encontrado e visivel")
             field.fill(settings.report_start_date)
             field.press("Tab")
@@ -375,7 +498,9 @@ def login_and_extract(page: Page, settings: Settings, logger):
     
     if settings.report_end_date_selector:
         try:
-            field = _find_visible_element(page, settings.report_end_date_selector, 15000)
+            field = _find_with_groq_fallback(
+                page, settings, settings.report_end_date_selector, "end_date", 15000, logger, groq_client
+            )
             logger.info("Campo de data final encontrado e visivel")
             field.fill(settings.report_end_date)
             field.press("Tab")
