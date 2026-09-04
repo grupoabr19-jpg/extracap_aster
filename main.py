@@ -67,9 +67,11 @@ class Settings:
             return [x.strip() for x in os.getenv(name, "").replace(";", ",").split(",") if x.strip()]
         today = reference_date or datetime.now().date()
         return cls(
-            required("ASTER_URL"), required("ASTER_USERNAME"), required("ASTER_PASSWORD"),
-            required("ASTER_USERNAME_SELECTOR"), required("ASTER_PASSWORD_SELECTOR"),
-            required("ASTER_LOGIN_BUTTON_SELECTOR"), required("ASTER_REPORT_URL"),
+            os.getenv("ASTER_URL", "https://aster.gruposps.com.br/Login").strip(), required("ASTER_USERNAME"), required("ASTER_PASSWORD"),
+            os.getenv("ASTER_USERNAME_SELECTOR", "input#email||input[type=\"email\"]").strip(),
+            os.getenv("ASTER_PASSWORD_SELECTOR", "input[placeholder=\"Senha\"]||input[type=\"password\"]").strip(),
+            os.getenv("ASTER_LOGIN_BUTTON_SELECTOR", "button[type=\"submit\"]").strip(),
+            required("ASTER_REPORT_URL"),
             os.getenv("ASTER_REPORT_READY_SELECTOR", "body"), required("ASTER_REPORT_TABLE_SELECTOR"),
             os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_DATA_MODE", "daily_rows").strip(),
@@ -231,35 +233,48 @@ def login_and_extract(page: Page, settings: Settings, logger):
         reports.click()
     if settings.report_card_selector:
         logger.info("Abrindo cartao de relatorio: %s", settings.report_card_selector)
-        matches = page.locator(settings.report_card_selector)
-        match_count = matches.count()
-        logger.info("Correspondencias do cartao: %s", match_count)
         clicked = False
-        for index in range(match_count - 1, -1, -1):
-            candidate = matches.nth(index)
-            clickable = candidate.locator(
-                "xpath=ancestor-or-self::*[@role='button' or self::button or self::a or @tabindex='0'][1]"
-            )
-            if clickable.count():
-                for clickable_index in range(clickable.count() - 1, -1, -1):
-                    target = clickable.nth(clickable_index)
-                    if target.is_visible():
-                        logger.info("Clicando no ancestral interativo do cartao (match=%s)", index)
+        deadline_ms = min(settings.navigation_timeout_ms, 30000)
+        started_at = page.locator("body").evaluate("() => Date.now()")
+        last_match_count = 0
+        while not clicked:
+            matches = page.locator(settings.report_card_selector)
+            last_match_count = matches.count()
+            for index in range(last_match_count - 1, -1, -1):
+                candidate = matches.nth(index)
+                ancestors = []
+                try:
+                    ancestors.append(candidate.locator(
+                        "xpath=ancestor-or-self::*[@role='button' or self::button or self::a or @tabindex='0'][1]"
+                    ))
+                except Exception:
+                    pass
+                for depth in range(1, 7):
+                    ancestors.append(candidate.locator("xpath=" + "/".join([".."] * depth)))
+
+                for ancestor in ancestors:
+                    if ancestor.count() and ancestor.first.is_visible():
+                        target = ancestor.first
+                        logger.info("Clicando no alvo visivel do cartao (match=%s)", index)
                         target.click()
                         clicked = True
                         break
+                if clicked:
+                    break
+                if candidate.is_visible():
+                    logger.info("Clicando no texto visivel do cartao (match=%s)", index)
+                    candidate.click()
+                    clicked = True
+                    break
+
             if clicked:
                 break
-            if candidate.is_visible():
-                candidate.click()
-                clicked = True
+            elapsed_ms = page.locator("body").evaluate("started => Date.now() - started", started_at)
+            if elapsed_ms >= deadline_ms:
                 break
-            fallback = candidate.locator("xpath=../..")
-            if fallback.count() and fallback.first.is_visible():
-                logger.info("Clicando no container visivel do cartao (match=%s)", index)
-                fallback.first.click()
-                clicked = True
-                break
+            page.wait_for_timeout(250)
+
+        logger.info("Correspondencias do cartao: %s", last_match_count)
         if not clicked:
             logger.error("Cartao de relatorio nao ficou clicavel: url=%s title=%s", page.url, page.title())
             _save_diagnostic(page, settings, "aster_report_card_timeout", logger)
