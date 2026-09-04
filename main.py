@@ -100,7 +100,7 @@ def login_and_extract(page: Page, settings: Settings, logger):
     page.set_default_timeout(settings.navigation_timeout_ms)
     page.set_default_navigation_timeout(settings.navigation_timeout_ms)
     logger.info("Abrindo tela de login")
-    page.goto(settings.aster_url, wait_until="domcontentloaded", timeout=settings.navigation_timeout_ms)
+    page.goto(settings.aster_url, wait_until="commit", timeout=settings.navigation_timeout_ms)
     logger.info("Tela de login carregada: %s", page.url)
     logger.info("Preenchendo usuario")
     username = page.locator(settings.username_selector)
