@@ -56,7 +56,7 @@ def read_sales_report(path: Path, reference_date: date, vendor_names, vendor_col
         wanted = {key(x) for x in (configured.split(",") if configured else defaults)}
         return next((original for normalized, original in columns.items() if normalized in wanted), None)
     vendor_field = find(vendor_column, ("vendedor", "vendedor(a)", "consultor"))
-    quantity_field = find(quantity_column, ("quantidade", "qtd", "toneladas", "peso", "volume", "vendido"))
+    quantity_field = find(quantity_column, ("quantidade", "qtd", "toneladas", "peso", "peso total", "volume", "vendido"))
     date_field = find(date_column, ("data", "data venda", "dt venda", "emissao"))
     if not vendor_field or not quantity_field:
         raise ValueError("Colunas Vendedor e Quantidade nao encontradas no relatorio")
