@@ -12,9 +12,8 @@ import ssl
 import sys
 from dotenv import load_dotenv
 from playwright.sync_api import Browser, Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
-from daily_comparison import HEADERS, calculate_rows
-from sales_parser import read_sales_report
-from sheets_client import load_targets_from_env
+from business_calendar import resolve_reference_date
+from sales_parser import read_sales_records
 from sheets_writer import publish_from_env
 
 ROOT = Path(__file__).resolve().parent
@@ -30,8 +29,8 @@ class Settings:
     report_url: str
     report_ready_selector: str
     report_table_selector: str
-    report_download_selector: str
     report_card_selector: str
+    report_data_mode: str
     report_start_date_selector: str
     report_end_date_selector: str
     report_confirm_selector: str
@@ -58,20 +57,21 @@ class Settings:
     sales_date_column: str
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls, reference_date=None):
         def required(name):
             value = os.getenv(name, "").strip()
             if not value: raise ValueError(f"Variavel obrigatoria ausente: {name}")
             return value
         def items(name):
             return [x.strip() for x in os.getenv(name, "").replace(";", ",").split(",") if x.strip()]
-        today = datetime.now().date()
+        today = reference_date or datetime.now().date()
         return cls(
             required("ASTER_URL"), required("ASTER_USERNAME"), required("ASTER_PASSWORD"),
             required("ASTER_USERNAME_SELECTOR"), required("ASTER_PASSWORD_SELECTOR"),
             required("ASTER_LOGIN_BUTTON_SELECTOR"), required("ASTER_REPORT_URL"),
             os.getenv("ASTER_REPORT_READY_SELECTOR", "body"), required("ASTER_REPORT_TABLE_SELECTOR"),
-            os.getenv("ASTER_REPORT_DOWNLOAD_SELECTOR", 'button[data-tip="Baixar XLSX"]').strip(), os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
+            os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
+            os.getenv("ASTER_REPORT_DATA_MODE", "daily_rows").strip(),
             os.getenv("ASTER_REPORT_START_DATE_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_END_DATE_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_CONFIRM_SELECTOR", 'button:has-text("Confirmar")').strip(),
             os.getenv("ASTER_REPORT_START_DATE", "").strip() or today.replace(day=1).strftime("%d/%m/%Y"),
@@ -140,13 +140,6 @@ def login_and_extract(page: Page, settings: Settings, logger):
         confirm = page.locator(settings.report_confirm_selector)
         confirm.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
         confirm.click()
-    if settings.report_download_selector:
-        settings.output_dir.mkdir(parents=True, exist_ok=True)
-        with page.expect_download() as info: page.locator(settings.report_download_selector).click()
-        download = info.value
-        path = settings.output_dir / f"aster_{datetime.now():%Y%m%d_%H%M%S}{Path(download.suggested_filename).suffix}"
-        download.save_as(path)
-        return f"Download gerado: {path.name}", path
     table = page.locator(settings.report_table_selector)
     table.wait_for(state="visible")
     return table.evaluate("element => element.outerHTML"), None
@@ -182,17 +175,24 @@ def send_email(settings, message, logger):
 
 def run(reference_date=None):
     load_dotenv(ROOT / ".env")
-    settings = Settings.from_env(); logger = configure_logging(settings.log_dir); logger.info("Inicio da execucao")
+    reference_date = resolve_reference_date(reference_date)
+    settings = Settings.from_env(reference_date); logger = configure_logging(settings.log_dir); logger.info("Inicio da execucao para %s", reference_date.isoformat())
     with sync_playwright() as playwright:
         browser: Browser = playwright.chromium.launch(headless=settings.headless)
         try:
             content, attachment = login_and_extract(browser.new_page(), settings, logger)
             if attachment is None and content.startswith("<"): attachment = html_to_csv(content, settings.output_dir)
             if settings.daily_comparison_enabled:
-                if not attachment: raise ValueError("Comparativo exige arquivo exportado")
-                targets = load_targets_from_env(); ref = reference_date or date.today()
-                daily, accumulated = read_sales_report(attachment, ref, [x.vendor for x in targets], settings.sales_vendor_column, settings.sales_quantity_column, settings.sales_date_column)
-                publish_from_env(HEADERS, calculate_rows(targets, daily, accumulated, ref, settings.working_days_remaining))
+                if not attachment: raise ValueError("A carga exige dados do relatorio")
+                records = read_sales_records(attachment, reference_date, settings.sales_vendor_column, settings.sales_quantity_column, settings.sales_date_column)
+                headers = ["Data", "Vendedor", "Peso do dia (kg)", "Observacao"]
+                if settings.report_data_mode == "cumulative_by_seller":
+                    totals = {}
+                    for _, vendor, amount in records: totals[vendor] = totals.get(vendor, Decimal("0")) + amount
+                    rows = [[reference_date.isoformat(), vendor, amount, f"Aster acumulado ate {reference_date.isoformat()}"] for vendor, amount in totals.items()]
+                else:
+                    rows = [[current.isoformat(), vendor, amount, "Automacao Aster"] for current, vendor, amount in records]
+                publish_from_env(headers, rows, reference_date, settings.report_data_mode)
             message = EmailMessage(); message["From"] = settings.mail_from; message["To"] = ", ".join(settings.mail_to); message["Cc"] = ", ".join(settings.mail_cc); message["Subject"] = settings.mail_subject; message.set_content("Relatorio Aster anexado.")
             if attachment: message.add_attachment(attachment.read_bytes(), maintype="application", subtype="octet-stream", filename=attachment.name)
             send_email(settings, message, logger)

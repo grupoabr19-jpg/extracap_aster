@@ -73,3 +73,32 @@ def read_sales_report(path: Path, reference_date: date, vendor_names, vendor_col
         accumulated[canonical] += amount
         if current == reference_date: daily[canonical] += amount
     return daily, accumulated
+
+def read_sales_records(path: Path, reference_date: date, vendor_column="", quantity_column="", date_column=""):
+    """Retorna as linhas do relatorio sem calcular deltas no Render."""
+    rows = read_rows(path)
+    if not rows:
+        raise ValueError("Relatorio de vendas vazio")
+    columns = {key(name): name for name in rows[0] if name is not None}
+    def find(configured, defaults):
+        wanted = {key(x) for x in (configured.split(",") if configured else defaults)}
+        return next((original for normalized, original in columns.items() if normalized in wanted), None)
+    vendor_field = find(vendor_column, ("vendedor", "vendedor(a)", "consultor"))
+    quantity_field = find(quantity_column, ("quantidade", "qtd", "toneladas", "peso", "peso total", "volume", "vendido"))
+    date_field = find(date_column, ("data", "data venda", "dt venda", "emissao"))
+    if not vendor_field or not quantity_field:
+        raise ValueError("Colunas Vendedor e Quantidade nao encontradas no relatorio")
+    records = []
+    for row in rows:
+        vendor = " ".join(str(row.get(vendor_field) or "").split()).strip()
+        if not vendor:
+            raise ValueError("Vendedor vazio no relatorio")
+        current = row_date(row.get(date_field)) if date_field else reference_date
+        if current is None:
+            raise ValueError(f"Data invalida para {vendor}")
+        if current > reference_date:
+            continue
+        records.append((current, vendor, number(row.get(quantity_field))))
+    if not records:
+        raise ValueError("Nenhum lancamento valido encontrado no relatorio")
+    return records
