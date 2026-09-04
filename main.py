@@ -102,6 +102,9 @@ def configure_logging(directory):
 def login_and_extract(page: Page, settings: Settings, logger):
     page.set_default_timeout(settings.navigation_timeout_ms)
     page.set_default_navigation_timeout(settings.navigation_timeout_ms)
+    page.on("console", lambda message: logger.info("Console do Aster [%s]: %s", message.type, message.text))
+    page.on("pageerror", lambda error: logger.error("Erro JavaScript do Aster: %s", error))
+    page.on("requestfailed", lambda request: logger.error("Requisicao falhou: %s - %s", request.url, request.failure))
     logger.info("Abrindo tela de login")
     logger.info("Iniciando navegacao para o Aster")
     try:
@@ -115,7 +118,14 @@ def login_and_extract(page: Page, settings: Settings, logger):
     logger.info("Preenchendo usuario")
     username = page.locator(settings.username_selector)
     logger.info("Aguardando campo de usuario: %s", settings.username_selector)
-    username.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
+    try:
+        username.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
+    except PlaywrightTimeoutError:
+        settings.output_dir.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(settings.output_dir / "aster_login_form_timeout.png"), full_page=True)
+        (settings.output_dir / "aster_login_form_timeout.html").write_text(page.content(), encoding="utf-8")
+        logger.error("Formulario de login nao apareceu: url=%s title=%s body=%s", page.url, page.title(), page.locator("body").inner_text()[:500])
+        raise ValueError("Timeout aguardando formulario de login; diagnostico salvo em output/aster_login_form_timeout.*")
     logger.info("Seletor de usuario encontrado: %s", username.count())
     username.fill(settings.username)
     logger.info("Preenchendo senha")
