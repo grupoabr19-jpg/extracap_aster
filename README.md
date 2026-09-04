@@ -4,10 +4,11 @@ Projeto Python para autenticar no Aster ERP com Playwright, extrair uma tabela o
 
 O projeto tambem pode operar no Render com duas entradas para a mesma rotina:
 
-- cron de segunda-feira a sexta-feira, as 08:00 UTC (05:00 em Brasilia);
+- cron todos os dias, as 08:00 UTC (05:00 em Brasilia);
 - acionamento manual protegido por token a partir do Google Sheets.
 
-Em ambos os casos, a data processada e o ultimo dia util encerrado. Uma nova
+Em ambos os casos, a data processada e o dia anterior, inclusive quando for
+sabado, domingo ou feriado. Uma nova
 execucao para a mesma data substitui somente aquele dia e preserva o historico.
 
 ## Estrutura
@@ -66,7 +67,7 @@ O `render.yaml` cria:
 1. `grupoabr-aster-varejo`: servico web que executa o Playwright e recebe o
    acionamento manual;
 2. `grupoabr-aster-varejo-diario`: cron que chama o servico as 08:00 UTC,
-   de segunda a sexta, e acompanha o status ate sucesso ou erro.
+   todos os dias e acompanha o status ate sucesso ou erro.
 
 As variaveis marcadas como `sync: false` devem ser preenchidas no primeiro
 deploy. Senhas e tokens nunca devem ser gravados no GitHub.
@@ -79,7 +80,9 @@ NON_WORKING_DATES=2026-09-07,2026-10-12,2026-11-02
 ```
 
 O fuso deve permanecer `America/Sao_Paulo` e o modo normal deve permanecer
-`REFERENCE_DATE_MODE=previous_business_day`.
+`REFERENCE_DATE_MODE=previous_calendar_day`. Os feriados continuam sendo
+usados pela planilha para calcular dias uteis, metas diarias e ritmo, mas nao
+impedem a captura diaria.
 
 ### Botao na planilha
 

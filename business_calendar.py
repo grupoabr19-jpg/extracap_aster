@@ -44,6 +44,10 @@ def previous_business_day(
     return candidate
 
 
+def previous_calendar_day(current_date: date) -> date:
+    return current_date - timedelta(days=1)
+
+
 def resolve_reference_date(explicit_date: date | None = None) -> date:
     if explicit_date is not None:
         return explicit_date
@@ -53,7 +57,9 @@ def resolve_reference_date(explicit_date: date | None = None) -> date:
     except Exception as error:
         raise ValueError(f"BUSINESS_TIMEZONE invalido: {timezone_name}") from error
     holidays = parse_non_working_dates(os.getenv("NON_WORKING_DATES", ""))
-    mode = os.getenv("REFERENCE_DATE_MODE", "previous_business_day").strip().casefold()
+    mode = os.getenv("REFERENCE_DATE_MODE", "previous_calendar_day").strip().casefold()
+    if mode == "previous_calendar_day":
+        return previous_calendar_day(current_date)
     if mode == "today":
         candidate = current_date
         while not is_business_day(candidate, holidays):
@@ -61,6 +67,7 @@ def resolve_reference_date(explicit_date: date | None = None) -> date:
         return candidate
     if mode != "previous_business_day":
         raise ValueError(
-            "REFERENCE_DATE_MODE deve ser previous_business_day ou today"
+            "REFERENCE_DATE_MODE deve ser previous_calendar_day, "
+            "previous_business_day ou today"
         )
     return previous_business_day(current_date, holidays)

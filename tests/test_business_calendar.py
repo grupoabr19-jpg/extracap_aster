@@ -1,10 +1,20 @@
 from datetime import date
 from unittest import TestCase
 
-from business_calendar import parse_non_working_dates, previous_business_day
+from business_calendar import (
+    parse_non_working_dates,
+    previous_business_day,
+    previous_calendar_day,
+)
 
 
 class BusinessCalendarTests(TestCase):
+    def test_calendar_day_includes_weekend(self):
+        self.assertEqual(
+            previous_calendar_day(date(2026, 9, 7)),
+            date(2026, 9, 6),
+        )
+
     def test_monday_returns_friday(self):
         self.assertEqual(
             previous_business_day(date(2026, 9, 7)),

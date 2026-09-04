@@ -14,7 +14,7 @@ services:
       - key: BUSINESS_TIMEZONE
         value: America/Sao_Paulo
       - key: REFERENCE_DATE_MODE
-        value: previous_business_day
+        value: previous_calendar_day
       - key: NON_WORKING_DATES
         value: ""
       - key: DAILY_COMPARISON_ENABLED
@@ -77,7 +77,7 @@ services:
     runtime: python
     plan: free
     region: virginia
-    schedule: "0 8 * * 1-5"
+    schedule: "0 8 * * *"
     buildCommand: echo "Agendador pronto"
     startCommand: python cron_trigger.py
     autoDeployTrigger: commit
