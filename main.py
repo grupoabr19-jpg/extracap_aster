@@ -279,21 +279,68 @@ def login_and_extract(page: Page, settings: Settings, logger):
             logger.error("Cartao de relatorio nao ficou clicavel: url=%s title=%s", page.url, page.title())
             _save_diagnostic(page, settings, "aster_report_card_timeout", logger)
             raise ValueError("O texto do cartao existe, mas nenhum container clicavel ficou visivel")
+    
+    # Aguardar que o formulário de filtros esteja visível e pronto
+    try:
+        page.wait_for_function(
+            """() => {
+                const modal = document.querySelector('[role="dialog"], .modal, [class*="form"], [class*="filter"]');
+                const dateInput = document.querySelector('input[type="date"], input[placeholder*="Data"], input[placeholder*="data"]');
+                return modal && modal.offsetParent !== null || dateInput && dateInput.offsetParent !== null;
+            }""",
+            timeout=min(settings.navigation_timeout_ms, 15000),
+        )
+    except PlaywrightTimeoutError:
+        logger.info("Formulario de filtros nao ficou visivel; tentando preencher os campos diretamente")
+    
     if settings.report_start_date_selector:
-        field = page.locator(settings.report_start_date_selector).first
-        field.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
-        field.fill(settings.report_start_date)
-        field.press("Tab")
+        try:
+            start_field, start_selector = _visible_locator(
+                page,
+                settings.report_start_date_selector,
+                'input[type="date"]',
+                min(settings.navigation_timeout_ms, 15000),
+            )
+            logger.info("Seletor de data inicial visivel: %s", start_selector)
+            start_field.fill(settings.report_start_date)
+            start_field.press("Tab")
+        except (PlaywrightTimeoutError, ValueError) as error:
+            logger.error("Campo de data inicial nao ficou visivel: %s", error)
+            _save_diagnostic(page, settings, "aster_report_start_date_timeout", logger)
+            raise ValueError("Campo de data inicial nao encontrado; verifique o seletor") from error
+    
     if settings.report_end_date_selector:
-        field = page.locator(settings.report_end_date_selector).first
-        field.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
-        field.fill(settings.report_end_date)
-        field.press("Tab")
+        try:
+            end_field, end_selector = _visible_locator(
+                page,
+                settings.report_end_date_selector,
+                'input[type="date"]',
+                min(settings.navigation_timeout_ms, 15000),
+            )
+            logger.info("Seletor de data final visivel: %s", end_selector)
+            end_field.fill(settings.report_end_date)
+            end_field.press("Tab")
+        except (PlaywrightTimeoutError, ValueError) as error:
+            logger.error("Campo de data final nao ficou visivel: %s", error)
+            _save_diagnostic(page, settings, "aster_report_end_date_timeout", logger)
+            raise ValueError("Campo de data final nao encontrado; verifique o seletor") from error
+    
     if settings.report_confirm_selector:
         logger.info("Aplicando periodo do relatorio")
-        confirm = page.locator(settings.report_confirm_selector).first
-        confirm.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
-        confirm.click()
+        try:
+            confirm, confirm_selector = _visible_locator(
+                page,
+                settings.report_confirm_selector,
+                'button:has-text("Confirmar"), button[type="submit"]',
+                min(settings.navigation_timeout_ms, 15000),
+            )
+            logger.info("Seletor de confirmacao visivel: %s", confirm_selector)
+            confirm.click()
+        except (PlaywrightTimeoutError, ValueError) as error:
+            logger.error("Botao de confirmacao nao ficou visivel: %s", error)
+            _save_diagnostic(page, settings, "aster_report_confirm_timeout", logger)
+            raise ValueError("Botao de confirmacao nao encontrado") from error
+    
     table = page.locator(settings.report_table_selector).first
     try:
         table.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
