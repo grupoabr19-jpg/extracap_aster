@@ -34,6 +34,7 @@ class Settings:
     report_card_selector: str
     report_start_date_selector: str
     report_end_date_selector: str
+    report_confirm_selector: str
     report_start_date: str
     report_end_date: str
     post_login_wait_ms: int
@@ -72,6 +73,7 @@ class Settings:
             os.getenv("ASTER_REPORT_READY_SELECTOR", "body"), required("ASTER_REPORT_TABLE_SELECTOR"),
             os.getenv("ASTER_REPORT_DOWNLOAD_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_CARD_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_START_DATE_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_END_DATE_SELECTOR", "").strip(),
+            os.getenv("ASTER_REPORT_CONFIRM_SELECTOR", 'button:has-text("Confirmar")').strip(),
             os.getenv("ASTER_REPORT_START_DATE", "").strip() or today.replace(day=1).strftime("%d/%m/%Y"),
             os.getenv("ASTER_REPORT_END_DATE", "").strip() or today.strftime("%d/%m/%Y"),
             int(os.getenv("ASTER_POST_LOGIN_WAIT_MS", "1000")), int(os.getenv("ASTER_NAVIGATION_TIMEOUT_MS", "30000")),
@@ -133,6 +135,11 @@ def login_and_extract(page: Page, settings: Settings, logger):
     if settings.report_end_date_selector:
         field = page.locator(settings.report_end_date_selector)
         field.fill(settings.report_end_date); field.press("Tab")
+    if settings.report_confirm_selector:
+        logger.info("Aplicando periodo do relatorio")
+        confirm = page.locator(settings.report_confirm_selector)
+        confirm.wait_for(state="visible", timeout=settings.navigation_timeout_ms)
+        confirm.click()
     if settings.report_download_selector:
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         with page.expect_download() as info: page.locator(settings.report_download_selector).click()
