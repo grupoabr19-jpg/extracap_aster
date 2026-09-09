@@ -11,6 +11,13 @@ def key(value):
     return "".join(c for c in text if not unicodedata.combining(c)).casefold()
 
 def number(value):
+    if isinstance(value, bool):
+        raise ValueError("Quantidade invalida")
+    if isinstance(value, (int, float, Decimal)):
+        amount = Decimal(str(value))
+        if not amount.is_finite():
+            raise ValueError("Quantidade invalida")
+        return amount
     text = re.sub(r"[^0-9,.-]", "", str(value or "").replace("kg", "").replace("KG", ""))
     if not text:
         raise ValueError("Quantidade vazia")
@@ -43,7 +50,11 @@ def read_rows(path):
     if path.suffix.lower() in {".xlsx", ".xlsm"}:
         from openpyxl import load_workbook
         workbook = load_workbook(path, read_only=True, data_only=True)
-        try: values = list(workbook.active.values)
+        try:
+            worksheet = workbook.active
+            if worksheet is None:
+                raise ValueError("Planilha XLSX sem aba ativa")
+            values = list(worksheet.values)
         finally: workbook.close()
         return [dict(zip([str(v or "") for v in values[0]], row)) for row in values[1:]] if values else []
     raise ValueError("O relatorio precisa ser CSV ou XLSX")
@@ -74,7 +85,7 @@ def read_sales_report(path: Path, reference_date: date, vendor_names, vendor_col
         if current == reference_date: daily[canonical] += amount
     return daily, accumulated
 
-def read_sales_records(path: Path, reference_date: date, vendor_column="", quantity_column="", date_column=""):
+def read_sales_records(path: Path, reference_date: date, vendor_column="", quantity_column="", date_column="", *, require_date=False):
     """Retorna as linhas do relatorio sem calcular deltas no Render."""
     rows = read_rows(path)
     if not rows:
@@ -86,6 +97,11 @@ def read_sales_records(path: Path, reference_date: date, vendor_column="", quant
     vendor_field = find(vendor_column, ("vendedor", "vendedor(a)", "consultor"))
     quantity_field = find(quantity_column, ("quantidade", "qtd", "toneladas", "peso", "peso total", "volume", "vendido"))
     date_field = find(date_column, ("data", "data venda", "dt venda", "emissao"))
+    if not date_field and (date_column or require_date):
+        raise ValueError(
+            "Relatorio sem coluna de data: um resumo de varios dias nao pode ser publicado como venda diaria. "
+            "Use um periodo de um dia ou alinhe o modo acumulado com o Apps Script."
+        )
     if not vendor_field or not quantity_field:
         raise ValueError("Colunas Vendedor e Quantidade nao encontradas no relatorio")
     records = []
