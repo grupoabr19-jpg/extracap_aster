@@ -45,9 +45,32 @@ from groq_client import GroqClient, sanitize_page_diagnostic
 ROOT = Path(__file__).resolve().parent
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 EMAIL_TEMPLATE = ROOT / "corpo_de_email.json"
+VALID_REPORT_DATA_MODES = {"daily_rows", "cumulative_by_seller", "date_balance"}
 
 class NoReportData(RuntimeError):
     """Raised when the report loaded correctly but returned no rows."""
+
+
+def _parse_report_date(value):
+    for pattern in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, pattern).date()
+        except ValueError:
+            pass
+    raise ValueError("Data de filtro invalida; use DD/MM/YYYY ou YYYY-MM-DD")
+
+
+def _validate_report_configuration(data_mode, start_date, end_date):
+    if data_mode not in VALID_REPORT_DATA_MODES:
+        raise ValueError(f"ASTER_REPORT_DATA_MODE invalido: {data_mode}")
+    start = _parse_report_date(start_date)
+    end = _parse_report_date(end_date)
+    if start > end:
+        raise ValueError("Data inicial posterior a data final")
+    if data_mode == "date_balance" and start != end:
+        raise ValueError(
+            "date_balance exige uma unica data; configure inicio e fim com o mesmo dia"
+        )
 
 @dataclass(frozen=True)
 class Settings:
@@ -105,6 +128,9 @@ class Settings:
         today = reference_date or datetime.now().date()
         report_data_mode = os.getenv("ASTER_REPORT_DATA_MODE", "date_balance").strip()
         default_start = today if report_data_mode == "date_balance" else today.replace(day=1)
+        report_start_date = os.getenv("ASTER_REPORT_START_DATE", "").strip() or default_start.strftime("%d/%m/%Y")
+        report_end_date = os.getenv("ASTER_REPORT_END_DATE", "").strip() or today.strftime("%d/%m/%Y")
+        _validate_report_configuration(report_data_mode, report_start_date, report_end_date)
         groq_model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip()
         if groq_model == "mixtral-8x7b-32768":
             groq_model = DEFAULT_GROQ_MODEL
@@ -119,8 +145,8 @@ class Settings:
             report_data_mode,
             os.getenv("ASTER_REPORT_START_DATE_SELECTOR", "").strip(), os.getenv("ASTER_REPORT_END_DATE_SELECTOR", "").strip(),
             os.getenv("ASTER_REPORT_CONFIRM_SELECTOR", 'button:has-text("Confirmar")').strip(),
-            os.getenv("ASTER_REPORT_START_DATE", "").strip() or default_start.strftime("%d/%m/%Y"),
-            os.getenv("ASTER_REPORT_END_DATE", "").strip() or today.strftime("%d/%m/%Y"),
+            report_start_date,
+            report_end_date,
             int(os.getenv("ASTER_POST_LOGIN_WAIT_MS", "1000")), int(os.getenv("ASTER_NAVIGATION_TIMEOUT_MS", "30000")),
             os.getenv("ASTER_HEADLESS", "true").lower() in {"1", "true", "yes"},
             required("SMTP_HOST"), int(os.getenv("SMTP_PORT", "587")), required("SMTP_USERNAME"),
@@ -131,7 +157,10 @@ class Settings:
             os.getenv("DAILY_COMPARISON_ENABLED", "true").lower() in {"1", "true", "yes"},
             int(os.getenv("DAILY_WORKING_DAYS_REMAINING", "0")), os.getenv("ASTER_SALES_VENDOR_COLUMN", ""),
             os.getenv("ASTER_SALES_QUANTITY_COLUMN", ""), os.getenv("ASTER_SALES_DATE_COLUMN", ""),
-            os.getenv("GROQ_ENABLED", "true").lower() in {"1", "true", "yes"},
+            (
+                os.getenv("GROQ_ENABLED", "false").lower() in {"1", "true", "yes"}
+                and os.getenv("ASTER_ALLOW_AI_RECOVERY", "false").lower() in {"1", "true", "yes"}
+            ),
             os.getenv("GROQ_API_KEY", "").strip(),
             groq_model,
             int(os.getenv("GROQ_TIMEOUT_SECONDS", "30")),
@@ -411,18 +440,13 @@ def _find_with_groq_fallback(
 
 def _apply_report_dates(page: Page, settings: Settings, logger, groq_client=None):
     """Resolve os dois campos antes de preencher e confirma os valores aplicados."""
-    def parse_date(value):
-        for pattern in ("%d/%m/%Y", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(value, pattern).date()
-            except ValueError:
-                pass
-        raise ValueError("Data de filtro invalida; use DD/MM/YYYY ou YYYY-MM-DD")
-
-    start = parse_date(settings.report_start_date)
-    end = parse_date(settings.report_end_date)
-    if start > end:
-        raise ValueError("Data inicial posterior a data final")
+    start = _parse_report_date(settings.report_start_date)
+    end = _parse_report_date(settings.report_end_date)
+    _validate_report_configuration(
+        getattr(settings, "report_data_mode", "daily_rows"),
+        settings.report_start_date,
+        settings.report_end_date,
+    )
     timeout = min(settings.navigation_timeout_ms, 15000)
     resolved = []
     for name, selector, value in (
@@ -1030,13 +1054,9 @@ def run(reference_date=None):
             headless=settings.headless,
             args=launch_args,
         )
-        # O Aster registra um Service Worker para uso offline. No job headless,
-        # ele pode servir um shell vazio antes de a SPA montar o login.
-        context = browser.new_context(
-            ignore_https_errors=False,
-            service_workers="block",
-        )
-        page = context.new_page()
+        # Usa o contexto padrao do Chromium. O Aster depende do comportamento
+        # normal da SPA e de seus service workers para montar a tela de login.
+        page = browser.new_page()
         try:
             no_report_data = False
             email_rows = []
@@ -1102,7 +1122,6 @@ def run(reference_date=None):
                 if os.getenv("MAIL_REQUIRED", "false").lower() in {"1", "true", "yes"}:
                     raise
         finally:
-            context.close()
             browser.close()
     logger.info("Execucao concluida")
 

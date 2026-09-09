@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import main
-from main import _date_balance_payload, build_email_message
+from main import _date_balance_payload, _validate_report_configuration, build_email_message
 from sales_parser import number, read_sales_records
 from sheets_writer import publish_rows, validate_payload
 
@@ -65,6 +65,15 @@ class IngestionContractTests(unittest.TestCase):
         self.assertEqual(headers, ["Data", "Vendedor", "Tipo", "Regiao", "Segmento", "Peso do dia (kg)", "Valor total"])
         self.assertEqual(rows, [["2026-09-04", "VARE - A", "VAREJO", "MICRO", "ESPECIALISTA", Decimal("1234.56"), "R$ 10,00"]])
         validate_payload(date(2026, 9, 4), "date_balance", headers, rows)
+
+    def test_date_balance_requires_a_single_day(self):
+        _validate_report_configuration("date_balance", "04/09/2026", "04/09/2026")
+        with self.assertRaisesRegex(ValueError, "unica data"):
+            _validate_report_configuration("date_balance", "01/09/2026", "04/09/2026")
+
+    def test_unknown_report_mode_is_rejected_early(self):
+        with self.assertRaisesRegex(ValueError, "DATA_MODE invalido"):
+            _validate_report_configuration("unknown", "04/09/2026", "04/09/2026")
 
     def test_invalid_vendor_and_weight_are_rejected(self):
         headers = ["Data", "Vendedor", "Peso do dia (kg)", "Observacao"]
@@ -177,6 +186,9 @@ class _FakePlaywrightContext:
 
 
 class _FakeBrowser:
+    def new_page(self):
+        return object()
+
     def new_context(self, **_kwargs):
         return _FakeBrowserContext()
 

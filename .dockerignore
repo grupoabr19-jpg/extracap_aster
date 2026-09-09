@@ -1,6 +1,7 @@
 .git
 .github
 .venv
+.tools
 __pycache__
 .pytest_cache
 *.pyc
@@ -9,3 +10,5 @@ __pycache__
 logs
 output
 *.log
+*.zip
+extracao_aster_corrigido

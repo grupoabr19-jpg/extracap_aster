@@ -7,3 +7,5 @@ logs/
 output/
 .pytest_cache/
 .tools/
+*.zip
+extracao_aster_corrigido/
