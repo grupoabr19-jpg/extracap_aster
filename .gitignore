@@ -6,4 +6,4 @@ tests/__pycache__/
 logs/
 output/
 .pytest_cache/
-
+.tools/
