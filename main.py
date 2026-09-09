@@ -16,7 +16,7 @@ import ssl
 import sys
 from threading import Thread
 from time import monotonic
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
 try:
     from dotenv import load_dotenv
@@ -163,6 +163,30 @@ def _save_diagnostic(page: Page, settings: Settings, stem: str, logger):
         (settings.output_dir / f"{stem}.html").write_text(page.content(), encoding="utf-8")
     except Exception as error:
         logger.warning("Nao foi possivel salvar HTML de diagnostico: %s", error)
+
+
+def _safe_url(value):
+    """Retorna somente origem e caminho para que logs nunca exponham queries."""
+    parsed = urlsplit(value)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _log_login_diagnostic(page: Page, logger):
+    """Registra o que o Render realmente recebeu do Aster ao falhar o login."""
+    try:
+        document = page.evaluate("""() => ({
+            readyState: document.readyState,
+            htmlLength: document.documentElement.outerHTML.length,
+            bodyLength: document.body ? document.body.innerHTML.length : 0,
+            bodyChildren: document.body ? document.body.children.length : 0,
+            scripts: Array.from(document.scripts).map(item => item.src || '[inline]'),
+            styles: Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(item => item.href)
+        })""")
+        document["scripts"] = [_safe_url(url) if url != "[inline]" else url for url in document["scripts"]]
+        document["styles"] = [_safe_url(url) for url in document["styles"]]
+        logger.error("Diagnostico DOM do login: %s", json.dumps(document, ensure_ascii=False))
+    except Exception as error:
+        logger.warning("Nao foi possivel coletar diagnostico DOM do login: %s", error)
 
 
 def _visible_locator(page: Page, configured: str, fallback: str, timeout: int):
@@ -526,6 +550,15 @@ def login_and_extract(page: Page, settings: Settings, logger):
     page.on("console", lambda message: logger.info("Console do Aster [%s]: %s", message.type, message.text))
     page.on("pageerror", lambda error: logger.error("Erro JavaScript do Aster: %s", error))
     page.on("requestfailed", lambda request: logger.error("Requisicao falhou: %s - %s", request.url, request.failure))
+    page.on(
+        "response",
+        lambda response: logger.error(
+            "Resposta HTTP do Aster: status=%s tipo=%s url=%s",
+            response.status,
+            response.request.resource_type,
+            _safe_url(response.url),
+        ) if response.status >= 400 else None,
+    )
     
     # Inicializar cliente Groq
     groq_client = None
@@ -561,6 +594,7 @@ def login_and_extract(page: Page, settings: Settings, logger):
     except (PlaywrightTimeoutError, ValueError) as error:
         body = page.locator("body").inner_text(timeout=3000)[:800]
         logger.error("Formulario nao apareceu: url=%s title=%s body=%s", page.url, page.title(), body)
+        _log_login_diagnostic(page, logger)
         _save_diagnostic(page, settings, "aster_login_form_timeout", logger)
         raise ValueError(
             "Timeout aguardando formulario de login; a SPA nao exibiu os campos. "
