@@ -49,18 +49,22 @@ def status():
 
 @app.post("/run")
 def trigger():
-    if not authorized(): return jsonify(error="unauthorized"), 401
-    with state_lock:
-        if state["state"] == "running": return jsonify(error="already_running"), 409
+    if not authorized():
+        return jsonify(error="unauthorized"), 401
     raw_date = request.json.get("reference_date") if isinstance(request.json, dict) else None
     reference_date = None
     if raw_date:
         from datetime import date
-        try: reference_date = date.fromisoformat(raw_date)
-        except ValueError: return jsonify(error="reference_date invalida"), 400
+        try:
+            reference_date = date.fromisoformat(raw_date)
+        except ValueError:
+            return jsonify(error="reference_date invalida"), 400
     selected_date = reference_date or previous_calendar_day()
     with state_lock:
-        if state["state"] == "running": return jsonify(error="already_running"), 409
+        # A verificação e a reserva acontecem no mesmo lock; duas requisições
+        # simultâneas não conseguem iniciar dois Playwrights em paralelo.
+        if state["state"] == "running":
+            return jsonify(error="already_running"), 409
         state.update(
             state="running",
             message="Atualizacao em andamento.",
@@ -68,8 +72,9 @@ def trigger():
             started_at=datetime.utcnow().isoformat() + "Z",
             finished_at=None,
         )
-    Thread(target=worker, args=(selected_date,), daemon=True).start()
-    return jsonify(state="running", message="Atualizacao iniciada."), 202
+        response = {"state": state["state"], "message": state["message"]}
+    Thread(target=worker, args=(selected_date,), daemon=True, name="aster-worker").start()
+    return jsonify(response), 202
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
