@@ -1,30 +1,12 @@
 """Publicacao segura de cargas no Apps Script."""
 import json, os
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date
 import math
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-VALID_DATA_MODES = {"daily_rows", "cumulative_by_seller", "date_balance"}
-
-def _date_key(value):
-    if isinstance(value, date):
-        return value.isoformat()
-    text = str(value or "").strip()
-    for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(text, pattern).date().isoformat()
-        except ValueError:
-            pass
-    return ""
-
-def _valid_amount(value):
-    return (
-        not isinstance(value, bool)
-        and isinstance(value, (int, float, Decimal))
-        and math.isfinite(float(value))
-    )
+VALID_DATA_MODES = {"daily_rows", "cumulative_by_seller"}
 
 def _json_value(value):
     if isinstance(value, Decimal): return float(value)
@@ -34,21 +16,12 @@ def _json_value(value):
 def validate_payload(reference_date, data_mode, headers, rows):
     if not isinstance(reference_date, date): raise ValueError("reference_date invalida")
     if data_mode not in VALID_DATA_MODES: raise ValueError("data_mode invalido")
-    expected_columns = 7 if data_mode == "date_balance" else 4
-    if len(headers) != expected_columns or any(not isinstance(header, str) or not header.strip() for header in headers): raise ValueError("headers invalidos")
+    if not headers or any(not isinstance(header, str) or not header for header in headers): raise ValueError("headers invalidos")
     for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) != len(headers): raise ValueError("Todas as linhas devem ter o mesmo numero de colunas")
-        if data_mode == "date_balance":
-            if not _date_key(row[0]): raise ValueError("Data vazia")
-            if not str(row[1]).strip(): raise ValueError("Vendedor vazio")
-            if str(row[2] or "").strip().casefold() != "varejo": raise ValueError("date_balance aceita somente linhas VAREJO")
-            if not _valid_amount(row[5]): raise ValueError("Peso invalido")
-            if _date_key(row[0]) > reference_date.isoformat(): raise ValueError("Linha com data posterior a reference_date")
-        else:
-            if not _date_key(row[0]): raise ValueError("Data vazia")
-            if not str(row[1]).strip(): raise ValueError("Vendedor vazio")
-            if not _valid_amount(row[2]): raise ValueError("Peso invalido")
-            if _date_key(row[0]) > reference_date.isoformat(): raise ValueError("Linha com data posterior a reference_date")
+        if not str(row[1]).strip(): raise ValueError("Vendedor vazio")
+        if not isinstance(row[2], (int, float, Decimal)) or not math.isfinite(float(row[2])): raise ValueError("Peso invalido")
+        if row[0] > reference_date.isoformat(): raise ValueError("Linha com data posterior a reference_date")
 
 def publish_rows(endpoint, token, sheet_name, reference_date, data_mode, headers, rows, timeout=30):
     validate_payload(reference_date, data_mode, headers, rows)
