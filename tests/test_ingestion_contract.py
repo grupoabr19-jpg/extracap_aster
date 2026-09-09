@@ -177,6 +177,9 @@ class _FakePlaywrightContext:
 
 
 class _FakeBrowser:
+    def new_page(self):
+        return object()
+
     def new_context(self, **_kwargs):
         return _FakeBrowserContext()
 

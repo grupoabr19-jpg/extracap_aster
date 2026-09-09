@@ -1017,32 +1017,10 @@ def run(reference_date=None):
     reference_date = resolve_reference_date(reference_date)
     settings = Settings.from_env(reference_date); logger = configure_logging(settings.log_dir); logger.info("Inicio da execucao para %s", reference_date.isoformat())
     with sync_playwright() as playwright:
-        launch_args = [
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ]
-        # O container oficial normalmente roda como root no Render; nesse caso
-        # o Chromium precisa de --no-sandbox para iniciar de forma determinística.
-        geteuid = getattr(os, "geteuid", None)
-        if callable(geteuid) and geteuid() == 0:
-            launch_args.append("--no-sandbox")
-        launch_kwargs = {"headless": settings.headless, "args": launch_args}
-        chromium_executable = getattr(settings, "chromium_executable", "")
-        if chromium_executable:
-            launch_kwargs["executable_path"] = chromium_executable
-            logger.info("Usando Chromium configurado em %s", chromium_executable)
-        browser: Browser = playwright.chromium.launch(**launch_kwargs)
-        # O Aster registra um Service Worker para uso offline. No job headless,
-        # ele pode servir um shell vazio antes de a SPA montar o login.
-        block_service_workers = os.getenv("ASTER_BLOCK_SERVICE_WORKERS", "false").lower() in {"1", "true", "yes"}
-        context = browser.new_context(
-            ignore_https_errors=False,
-            service_workers="block" if block_service_workers else "allow",
-        )
-        logger.info("Service workers do Aster: %s", "bloqueados" if block_service_workers else "permitidos")
-        page = context.new_page()
+        # Usa o Chromium distribuído com o Playwright, como na versão que
+        # funcionava antes da alteração de hoje no ambiente Render.
+        browser: Browser = playwright.chromium.launch(headless=settings.headless)
+        page = browser.new_page()
         try:
             no_report_data = False
             email_rows = []
@@ -1108,7 +1086,6 @@ def run(reference_date=None):
                 if os.getenv("MAIL_REQUIRED", "false").lower() in {"1", "true", "yes"}:
                     raise
         finally:
-            context.close()
             browser.close()
     logger.info("Execucao concluida")
 
