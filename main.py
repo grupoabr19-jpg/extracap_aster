@@ -189,6 +189,23 @@ def _save_diagnostic(page: Page, settings: Settings, stem: str, logger):
         (settings.output_dir / f"{stem}.html").write_text(page.content(), encoding="utf-8")
     except Exception as error:
         logger.warning("Nao foi possivel salvar HTML de diagnostico: %s", error)
+    try:
+        # O HTML de uma SPA pode conter apenas a div raiz. Os recursos abaixo
+        # revelam se o bundle que deveria montar a tela foi sequer carregado.
+        diagnostic = page.evaluate(
+            """() => ({
+                url: location.href,
+                title: document.title,
+                readyState: document.readyState,
+                scripts: [...document.scripts].map(script => ({src: script.src, type: script.type})),
+                resources: performance.getEntriesByType('resource').map(entry => entry.name),
+            })"""
+        )
+        (settings.output_dir / f"{stem}.json").write_text(
+            json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as error:
+        logger.warning("Nao foi possivel salvar metadados de diagnostico: %s", error)
 
 
 def _visible_locator(page: Page, configured: str, fallback: str, timeout: int):
@@ -1044,6 +1061,7 @@ def run(reference_date=None):
             "--disable-gpu",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
         ]
         # O container oficial normalmente roda como root no Render; nesse caso
         # o Chromium precisa de --no-sandbox para iniciar de forma determinística.
@@ -1054,9 +1072,18 @@ def run(reference_date=None):
             headless=settings.headless,
             args=launch_args,
         )
-        # Usa o contexto padrao do Chromium. O Aster depende do comportamento
-        # normal da SPA e de seus service workers para montar a tela de login.
-        page = browser.new_page()
+        # Um user-agent explicitamente de Chrome evita que o servidor entregue
+        # uma variante incompleta da SPA ao Chromium headless do container.
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1440, "height": 900},
+            locale="pt-BR",
+            timezone_id="America/Sao_Paulo",
+        )
+        page = context.new_page()
         try:
             no_report_data = False
             email_rows = []
@@ -1122,6 +1149,7 @@ def run(reference_date=None):
                 if os.getenv("MAIL_REQUIRED", "false").lower() in {"1", "true", "yes"}:
                     raise
         finally:
+            context.close()
             browser.close()
     logger.info("Execucao concluida")
 
