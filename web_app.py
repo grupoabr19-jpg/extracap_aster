@@ -1,80 +1,44 @@
-"""API HTTP para acionamento da automacao no Render."""
+from __future__ import annotations
+
+import hmac, os, threading
 from datetime import datetime
-import logging
-import os
-from threading import Lock, Thread
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
-from main import run
-from business_calendar import previous_calendar_day
+from v2.config import Config
+from v2.service import run
 
-load_dotenv()
-app = Flask(__name__)
-state_lock = Lock()
-state = {"state": "idle", "message": "Nenhuma execucao iniciada.", "reference_date": None, "started_at": None, "finished_at": None}
+load_dotenv(); app=Flask(__name__); lock=threading.Lock(); status={"state":"idle","message":"Nenhuma execução iniciada."}
 
-def authorized():
-    expected = os.getenv("TRIGGER_TOKEN", "")
-    supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    return bool(expected and supplied and supplied == expected)
+def auth():
+    expected=os.getenv("TRIGGER_TOKEN",""); supplied=request.headers.get("Authorization","")
+    return bool(expected and supplied.startswith("Bearer ") and hmac.compare_digest(supplied[7:],expected))
 
-def worker(reference_date):
-    with state_lock: state.update(state="running", message="Atualizacao em andamento.", reference_date=reference_date.isoformat(), started_at=datetime.utcnow().isoformat() + "Z", finished_at=None)
+def work(raw_date):
+    global status
+    status={"state":"running","started_at":datetime.utcnow().isoformat()+"Z","reference_date":raw_date}
     try:
-        run(reference_date)
-        with state_lock: state.update(state="success", message="Atualizacao concluida.")
-    except Exception as error:
-        logging.getLogger("aster").exception("Falha na execucao para %s", reference_date.isoformat())
-        with state_lock: state.update(state="error", message=str(error))
-    finally:
-        with state_lock: state["finished_at"] = datetime.utcnow().isoformat() + "Z"
+        result=run(Config.load().reference_date(raw_date or None),Config.load()); status={"state":"success",**result,"finished_at":datetime.utcnow().isoformat()+"Z"}
+    except Exception as exc:
+        status={"state":"error","message":f"{type(exc).__name__}: {exc}","finished_at":datetime.utcnow().isoformat()+"Z"}
+    finally: lock.release()
 
 @app.get("/health")
 def health():
-    required = (
-        "ASTER_URL", "ASTER_USERNAME", "ASTER_PASSWORD",
-        "ASTER_USERNAME_SELECTOR", "ASTER_PASSWORD_SELECTOR",
-        "ASTER_LOGIN_BUTTON_SELECTOR", "ASTER_REPORT_URL",
-        "ASTER_REPORT_TABLE_SELECTOR", "SMTP_HOST", "SMTP_USERNAME",
-        "SMTP_PASSWORD", "MAIL_FROM", "SHEETS_API_URL", "SHEETS_API_TOKEN",
-        "TRIGGER_TOKEN",
-    )
-    missing = [name for name in required if not os.getenv(name)]
-    return jsonify(status="ok" if not missing else "degraded", missing=missing)
-
-@app.get("/status")
-def status():
-    if not authorized(): return jsonify(error="unauthorized"), 401
-    with state_lock: return jsonify(dict(state))
+    required=["TRIGGER_TOKEN","ASTER_URL","ASTER_USERNAME","ASTER_PASSWORD","ASTER_USERNAME_SELECTOR","ASTER_PASSWORD_SELECTOR","ASTER_LOGIN_BUTTON_SELECTOR","ASTER_REPORT_URL","ASTER_REPORT_READY_SELECTOR","ASTER_REPORT_DOWNLOAD_SELECTOR","ASTER_REPORT_START_DATE_SELECTOR","ASTER_REPORT_END_DATE_SELECTOR","SHEETS_V2_URL","SHEETS_V2_TOKEN"]
+    missing=[x for x in required if not os.getenv(x,"").strip()]
+    return jsonify({"status":"configuration_required" if missing else "ok","missing":missing,"version":"v2"}), (503 if missing else 200)
 
 @app.post("/run")
 def trigger():
-    if not authorized():
-        return jsonify(error="unauthorized"), 401
-    raw_date = request.json.get("reference_date") if isinstance(request.json, dict) else None
-    reference_date = None
-    if raw_date:
-        from datetime import date
-        try:
-            reference_date = date.fromisoformat(raw_date)
-        except ValueError:
-            return jsonify(error="reference_date invalida"), 400
-    selected_date = reference_date or previous_calendar_day()
-    with state_lock:
-        # A verificação e a reserva acontecem no mesmo lock; duas requisições
-        # simultâneas não conseguem iniciar dois Playwrights em paralelo.
-        if state["state"] == "running":
-            return jsonify(error="already_running"), 409
-        state.update(
-            state="running",
-            message="Atualizacao em andamento.",
-            reference_date=selected_date.isoformat(),
-            started_at=datetime.utcnow().isoformat() + "Z",
-            finished_at=None,
-        )
-        response = {"state": state["state"], "message": state["message"]}
-    Thread(target=worker, args=(selected_date,), daemon=True, name="aster-worker").start()
-    return jsonify(response), 202
+    if not auth(): return jsonify({"error":"unauthorized"}),401
+    if not lock.acquire(blocking=False): return jsonify({"error":"already_running","status":status}),409
+    body=request.get_json(silent=True) or {}; raw=str(body.get("reference_date") or "").strip() or None
+    if raw:
+        try: Config.load().reference_date(raw)
+        except ValueError: lock.release(); return jsonify({"error":"invalid_reference_date"}),400
+    threading.Thread(target=work,args=(raw,),daemon=True).start(); return jsonify({"status":"accepted","version":"v2"}),202
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+@app.get("/status")
+def get_status():
+    if not auth(): return jsonify({"error":"unauthorized"}),401
+    return jsonify(status)

@@ -1,11 +1,21 @@
 .env
-.venv/
+.env.*
+!.env.example
+!.env.v2.example
+
+# OAuth credentials downloaded from Google Cloud
+client_secret_*.json
+
+# Python caches and local virtual environments
 __pycache__/
 *.py[cod]
-tests/__pycache__/
+.venv/
+.pytest_cache/
+
+# Runtime artifacts
 logs/
 output/
-.pytest_cache/
-.tools/
 *.zip
-extracao_aster_corrigido/
+
+# Local tooling
+.tools/
