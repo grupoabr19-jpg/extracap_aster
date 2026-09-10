@@ -24,7 +24,7 @@ class Config:
         return datetime.strptime(override, "%Y-%m-%d").date() if override else datetime.now(ZoneInfo(self.timezone)).date() - timedelta(days=1)
 
     def validate_for_run(self) -> None:
-        required = {"ASTER_URL": self.aster_url, "ASTER_USERNAME": self.aster_user, "ASTER_PASSWORD": self.aster_password, "ASTER_USERNAME_SELECTOR": self.username_selector, "ASTER_PASSWORD_SELECTOR": self.password_selector, "ASTER_LOGIN_BUTTON_SELECTOR": self.login_selector, "ASTER_REPORT_URL": self.aster_report_url, "ASTER_REPORT_READY_SELECTOR": self.report_ready_selector, "ASTER_REPORT_DOWNLOAD_SELECTOR": self.download_selector, "ASTER_REPORT_START_DATE_SELECTOR": self.start_selector, "ASTER_REPORT_END_DATE_SELECTOR": self.end_selector, "SHEETS_V2_URL": self.sheets_url, "SHEETS_V2_TOKEN": self.sheets_token}
+        required = {"ASTER_URL": self.aster_url, "ASTER_USERNAME": self.aster_user, "ASTER_PASSWORD": self.aster_password, "ASTER_USERNAME_SELECTOR": self.username_selector, "ASTER_PASSWORD_SELECTOR": self.password_selector, "ASTER_LOGIN_BUTTON_SELECTOR": self.login_selector, "ASTER_REPORT_URL": self.aster_report_url, "ASTER_REPORT_DOWNLOAD_SELECTOR": self.download_selector, "ASTER_REPORT_START_DATE_SELECTOR": self.start_selector, "ASTER_REPORT_END_DATE_SELECTOR": self.end_selector, "SHEETS_V2_URL": self.sheets_url, "SHEETS_V2_TOKEN": self.sheets_token}
         missing = [name for name, value in required.items() if not value]
         if missing: raise ValueError("Configuração ausente: " + ", ".join(missing))
         if self.email_enabled:

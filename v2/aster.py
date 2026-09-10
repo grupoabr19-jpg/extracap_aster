@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from pathlib import Path
 
@@ -75,6 +76,7 @@ class AsterExtractor:
 
     def _download(self, page: Page, reference_date: date, output_dir: Path, stamp: str) -> Path:
         config = self.config
+        log.info("Aster: abrindo login")
         page.goto(config.aster_url, wait_until="domcontentloaded")
         page.locator(config.username_selector).fill(config.aster_user)
         page.locator(config.password_selector).fill(config.aster_password)
@@ -82,31 +84,53 @@ class AsterExtractor:
         page.wait_for_url(lambda url: "/login" not in url.lower(), timeout=60_000)
 
         if config.aster_report_url:
+            log.info("Aster: abrindo workspace")
             page.goto(config.aster_report_url, wait_until="domcontentloaded")
         self._raise_if_session_lost(page)
         if config.report_card_selector:
+            log.info("Aster: abrindo cartao do Resumo Comercial")
             page.locator(config.report_card_selector).last.click()
-        if config.report_ready_selector:
+        # The report fields are the most stable indication that the card was
+        # opened.  The former Reports-tab selector is optional and is used
+        # only when a deployment has no date-field selector configured.
+        if config.start_selector:
+            page.locator(self._selector(config.start_selector)).wait_for(state="visible")
+        elif config.report_ready_selector:
             page.locator(config.report_ready_selector).wait_for(state="visible")
         self._raise_if_session_lost(page)
 
         formatted_date = reference_date.strftime("%d/%m/%Y")
         if config.start_selector:
-            page.locator(config.start_selector).fill(formatted_date)
-            page.locator(config.start_selector).press("Tab")
+            start_selector = self._selector(config.start_selector)
+            log.info("Aster: preenchendo data inicial")
+            page.locator(start_selector).fill(formatted_date)
+            page.locator(start_selector).press("Tab")
         if config.end_selector:
-            page.locator(config.end_selector).fill(formatted_date)
-            page.locator(config.end_selector).press("Tab")
+            end_selector = self._selector(config.end_selector)
+            log.info("Aster: preenchendo data final")
+            page.locator(end_selector).fill(formatted_date)
+            page.locator(end_selector).press("Tab")
         if not config.download_selector:
             raise ValueError("ASTER_REPORT_DOWNLOAD_SELECTOR é obrigatório na nova versão")
 
         with page.expect_download(timeout=90_000) as download_info:
+            log.info("Aster: solicitando download")
             page.locator(config.download_selector).click()
         download = download_info.value
         suffix = Path(download.suggested_filename).suffix.lower() or ".csv"
         path = output_dir / f"resumo_comercial_{stamp}{suffix}"
         download.save_as(path)
         return path
+
+    @staticmethod
+    def _selector(value: str) -> str:
+        """Accept a CSS selector or an accidentally pasted input HTML snippet."""
+        selector = value.strip()
+        if selector.startswith("<"):
+            identifier = re.search(r'\bid\s*=\s*["\']([^"\']+)["\']', selector)
+            if identifier:
+                return f"input#{identifier.group(1)}"
+        return selector
 
     def _session_was_lost(self, page: Page | None) -> bool:
         if page is None or page.is_closed():
